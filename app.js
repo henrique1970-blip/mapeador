@@ -31,19 +31,25 @@
 
   // ---------- Armazenamento ----------
   const defaults = { areaUnit: 'ha', lenUnit: 'm', layer: 'hybrid', labels: true, gpsMinDist: 5, gpsMaxAcc: 25, view: null };
-  let store = { items: [], settings: Object.assign({}, defaults) };
+  // deleted: marcas de exclusão {id, updated}, para a exclusão chegar aos outros aparelhos
+  let store = { items: [], deleted: [], settings: Object.assign({}, defaults) };
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const s = JSON.parse(raw);
       store.items = Array.isArray(s.items) ? s.items : [];
+      store.deleted = Array.isArray(s.deleted) ? s.deleted : [];
       store.settings = Object.assign({}, defaults, s.settings || {});
     }
   } catch (e) { /* sem armazenamento: segue em memória */ }
+  // a configuração de sync guarda o token do Gist: fica em chave própria, fora do backup exportado
+  const SYNC_KEY = 'mapeador.sync';
   function persist() {
     try { localStorage.setItem(KEY, JSON.stringify(store)); }
     catch (e) { toast('Não foi possível salvar neste aparelho. Exporte suas medições.'); }
   }
+  // grava e avisa o sync (só quando as medições mudaram)
+  function persistItems() { persist(); Sync.schedule(); }
   const S = store.settings;
 
   function measure(m) {
@@ -79,16 +85,21 @@
 
   const esri = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
   const esriAttr = 'Imagens © Esri, Maxar, Earthstar Geographics';
-  const sat = () => L.tileLayer(esri + 'World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom: 19, maxZoom: 21, attribution: esriAttr });
+  // crossOrigin: o service worker guarda respostas legíveis (opacas estourariam a cota do navegador)
+  const tl = (url, o) => L.tileLayer(url, Object.assign({ maxNativeZoom: 19, maxZoom: 21, crossOrigin: true }, o));
+  const ESRI_SAT = esri + 'World_Imagery/MapServer/tile/{z}/{y}/{x}';
+  const ESRI_ROADS = esri + 'Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}';
+  const ESRI_PLACES = esri + 'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
+  const sat = () => tl(ESRI_SAT, { attribution: esriAttr });
+  // offline: só as camadas cujo provedor não proíbe download em lote (OSM e OpenTopoMap proíbem)
   const BASES = {
-    hybrid: { label: 'Satélite com nomes', make: () => L.layerGroup([sat(),
-      L.tileLayer(esri + 'Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom: 19, maxZoom: 21 }),
-      L.tileLayer(esri + 'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom: 19, maxZoom: 21 })]) },
-    sat: { label: 'Satélite', make: sat },
-    osm: { label: 'Ruas (OpenStreetMap)', make: () => L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      { maxNativeZoom: 19, maxZoom: 21, attribution: '© colaboradores do OpenStreetMap' }) },
-    topo: { label: 'Topográfico (OpenTopoMap)', make: () => L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-      { maxNativeZoom: 17, maxZoom: 21, subdomains: 'abc', attribution: '© OpenStreetMap, SRTM · estilo © OpenTopoMap (CC-BY-SA)' }) }
+    hybrid: { label: 'Satélite com nomes', offline: [ESRI_SAT, ESRI_ROADS, ESRI_PLACES],
+      make: () => L.layerGroup([sat(), tl(ESRI_ROADS), tl(ESRI_PLACES)]) },
+    sat: { label: 'Satélite', offline: [ESRI_SAT], make: sat },
+    osm: { label: 'Ruas (OpenStreetMap)', make: () => tl('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      { attribution: '© colaboradores do OpenStreetMap' }) },
+    topo: { label: 'Topográfico (OpenTopoMap)', make: () => tl('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+      { maxNativeZoom: 17, subdomains: 'abc', attribution: '© OpenStreetMap, SRTM · estilo © OpenTopoMap (CC-BY-SA)' }) }
   };
   let baseLayer = null;
   function setBase(key) {
@@ -203,7 +214,8 @@
     if (!m) return;
     confirmBox('Excluir medição', `Excluir "${m.name}"? Não dá para desfazer.`, 'Excluir', () => {
       store.items = store.items.filter(x => x.id !== m.id);
-      persist(); selectedId = null; showInfo(false); renderSaved(); renderList();
+      store.deleted.push({ id: m.id, updated: new Date().toISOString() });
+      persistItems(); selectedId = null; showInfo(false); renderSaved(); renderList();
       toast('Medição excluída');
     }, true);
   };
@@ -399,9 +411,10 @@
         m.notes = $('fNotes').value.trim();
         const now = new Date().toISOString();
         m.updated = now;
-        if (cur.editingId) store.items = store.items.map(x => x.id === cur.editingId ? m : x);
+        // a original pode ter sido excluída em outro aparelho durante a edição: aí entra como nova
+        if (cur.editingId && store.items.some(x => x.id === cur.editingId)) store.items = store.items.map(x => x.id === cur.editingId ? m : x);
         else { m.created = now; store.items.push(m); }
-        persist();
+        persistItems();
         const id = m.id;
         endDraw();
         renderList();
@@ -623,7 +636,7 @@
         m.group = m.group || file.name.replace(/\.[^.]+$/, '');
       });
       store.items.push(...valid);
-      persist(); renderSaved(); renderList();
+      persistItems(); renderSaved(); renderList();
       map.fitBounds(L.latLngBounds(valid.flatMap(m => m.points)), { padding: [40, 40], maxZoom: 18 });
       $('drawer').hidden = true;
       toast(`${valid.length} medição(ões) importada(s)`);
@@ -642,20 +655,146 @@
       <div><label for="fLU">Distância</label><select id="fLU">${opt(LEN_UNITS, S.lenUnit)}</select></div></div>
       <div class="row2"><div><label for="fGD">GPS: marcar a cada (m)</label><input id="fGD" type="number" min="1" max="500" value="${S.gpsMinDist}"></div>
       <div><label for="fGA">GPS: precisão mínima (m)</label><input id="fGA" type="number" min="3" max="200" value="${S.gpsMaxAcc}"></div></div>`,
-    [{ label: 'Fechar', cls: 'primary', onClick: () => {
-      const base = document.querySelector('input[name=base]:checked').value;
-      if (base !== S.layer) setBase(base);
-      S.labels = $('fLabels').checked;
-      S.areaUnit = $('fAU').value;
-      S.lenUnit = $('fLU').value;
-      S.gpsMinDist = Math.max(1, +$('fGD').value || defaults.gpsMinDist);
-      S.gpsMaxAcc = Math.max(3, +$('fGA').value || defaults.gpsMaxAcc);
-      persist(); renderSaved(); renderList();
-      if (cur) redraw(); else if (selectedId) selectItem(selectedId);
-    } }]);
+    [{ label: '⬇ Mapa offline', onClick: () => { applySettings(); openOffline(); return false; } },
+      { label: 'Fechar', cls: 'primary', onClick: applySettings }]);
+  }
+  function applySettings() {
+    const base = document.querySelector('input[name=base]:checked').value;
+    if (base !== S.layer) setBase(base);
+    S.labels = $('fLabels').checked;
+    S.areaUnit = $('fAU').value;
+    S.lenUnit = $('fLU').value;
+    S.gpsMinDist = Math.max(1, +$('fGD').value || defaults.gpsMinDist);
+    S.gpsMaxAcc = Math.max(3, +$('fGA').value || defaults.gpsMaxAcc);
+    persist(); renderSaved(); renderList();
+    if (cur) redraw(); else if (selectedId) selectItem(selectedId);
   }
   $('btnLayers').onclick = openSettings;
   $('btnUnits').onclick = openSettings;
+
+  // ---------- Mapa offline ----------
+  const mb = bytes => bytes == null ? '?' : nf(bytes / 1048576, 0) + ' MB';
+  function openOffline() {
+    const bounds = map.getBounds(), z = Math.round(map.getZoom());
+    const base = BASES[S.layer];
+    const templates = base.offline || BASES.hybrid.offline;
+    const zMin = Math.max(1, Math.min(z, 19) - 4);
+    const choices = [];
+    for (let zMax = Math.max(zMin, 13); zMax <= 19; zMax++) {
+      const n = Offline.count(bounds, zMin, zMax, templates.length);
+      choices.push({ zMax, n, ok: n <= Offline.MAX_TILES });
+    }
+    const usable = choices.filter(c => c.ok);
+    const def = usable.length ? usable[usable.length - 1].zMax : null;
+    modal('Mapa offline', `
+      <p style="margin-top:0">Baixa as imagens da <b>área que está na tela agora</b>, para ver o mapa no campo sem internet.
+      Enquadre a fazenda ou a região antes de abrir esta janela.</p>
+      ${base.offline ? '' : '<p style="color:var(--muted);font-size:13px">A camada atual não permite download; será baixada a camada Satélite com nomes.</p>'}
+      ${def == null ? '<p style="color:var(--danger)">A área na tela é grande demais. Aproxime o mapa e tente de novo.</p>' : `
+      <label for="fZ">Nível de detalhe</label>
+      <select id="fZ">${choices.map(c => `<option value="${c.zMax}" ${c.ok ? '' : 'disabled'} ${c.zMax === def ? 'selected' : ''}>
+        Zoom ${c.zMax}${c.zMax >= 18 ? ' (ver cercas e trilhas)' : c.zMax >= 16 ? ' (ver talhões)' : ''} · ${nf(c.n, 0)} blocos · ~${nf(c.n * 15 / 1024, 0)} MB${c.ok ? '' : ' — grande demais'}</option>`).join('')}
+      </select>`}
+      <p id="offInfo" style="color:var(--muted);font-size:13px">Verificando o que já está guardado…</p>`,
+    [{ label: 'Apagar baixados', cls: 'danger', onClick: () => {
+        confirmBox('Apagar mapas baixados', 'Apagar todas as imagens guardadas para uso offline? As medições não são afetadas.', 'Apagar',
+          () => Offline.clear().then(() => toast('Mapas offline apagados')), true);
+        return false;
+      } },
+      { label: 'Fechar', cls: 'ghost' }]
+      .concat(def == null ? [] : [{ label: 'Baixar', cls: 'primary', onClick: () => {
+        startDownload(Offline.tileList(bounds, zMin, +$('fZ').value, templates));
+        return false;
+      } }]));
+    Offline.info().then(i => {
+      const el = $('offInfo');
+      if (el) el.textContent = `Guardados neste aparelho: ${nf(i.tiles, 0)} blocos · espaço usado pelo app ${mb(i.usage)}` +
+        (i.quota ? ` de ${mb(i.quota)} disponíveis` : '');
+    });
+  }
+  async function startDownload(urls) {
+    modal('Baixando mapa', `<progress id="dlBar" max="${urls.length}" value="0" style="width:100%"></progress>
+      <p id="dlTxt">0 de ${nf(urls.length, 0)}</p>
+      <p style="color:var(--muted);font-size:13px">Pode fechar esta janela; o download continua enquanto o app estiver aberto.</p>`,
+    [{ label: 'Parar', cls: 'danger', onClick: () => { Offline.stop(); } }, { label: 'Ocultar', cls: 'ghost' }]);
+    const r = await Offline.download(urls, (done, total, failed) => {
+      if ($('dlBar')) { $('dlBar').value = done; $('dlTxt').textContent = `${nf(done, 0)} de ${nf(total, 0)}` + (failed ? ` · ${failed} falharam` : ''); }
+    });
+    const msg = r.cancelled ? `Download interrompido: ${nf(r.done, 0)} blocos guardados.`
+      : `Mapa guardado: ${nf(r.done - r.failed, 0)} blocos.` + (r.failed ? ` ${r.failed} falharam (sem internet?) — rode de novo para completar.` : '');
+    if (!$('modal').hidden && $('dlBar')) modal('Mapa offline', `<p>${msg}</p>`, [{ label: 'OK', cls: 'primary' }]);
+    else toast(msg, 5000);
+  }
+
+  // ---------- Sincronização ----------
+  const fmtTime = iso => iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'nunca';
+  const KIND_LABEL = { gist: 'GitHub Gist', firebase: 'conta Google' };
+  function renderSyncLine(st) {
+    const el = $('syncLine');
+    if (!st.connected) { el.textContent = '☁ Sincronização desligada — os dados ficam só neste aparelho.'; el.style.color = ''; return; }
+    el.style.color = st.error ? 'var(--danger)' : '';
+    el.textContent = st.busy ? '☁ Sincronizando…'
+      : st.error ? `☁ ${st.error}` : `☁ Sincronizado (${KIND_LABEL[st.kind]}) · ${fmtTime(st.last)}`;
+  }
+  function openSync() {
+    const st = Sync.status();
+    if (st.connected) {
+      modal('Sincronização', `
+        <p style="margin-top:0">Conectado por <b>${KIND_LABEL[st.kind]}</b>${st.account ? ` como <b>${esc(st.account)}</b>` : ''}.</p>
+        <p>Última sincronização: ${fmtTime(st.last)}</p>
+        ${st.error ? `<p style="color:var(--danger)">${esc(st.error)}</p>` : ''}
+        <p style="color:var(--muted);font-size:13px">Sincroniza sozinho ao salvar, ao abrir o app e a cada 5 minutos.</p>`,
+      [{ label: 'Desconectar', cls: 'danger', onClick: () => {
+          confirmBox('Desconectar', 'Parar de sincronizar este aparelho? As medições continuam aqui e na nuvem.', 'Desconectar',
+            () => Sync.disconnect().then(() => toast('Sincronização desligada')), true);
+          return false;
+        } },
+        { label: 'Sincronizar agora', cls: 'primary', onClick: () => { Sync.now(); toast('Sincronizando…'); } }]);
+      return;
+    }
+    const fbOk = Sync.firebaseAvailable();
+    modal('Sincronizar aparelhos', `
+      <p style="margin-top:0">Conecte <b>todos os seus aparelhos</b> à mesma conta. As medições de cada um se juntam
+      e passam a aparecer em todos.</p>
+      <button type="button" class="tool primary choice" id="sGoogle" ${fbOk ? '' : 'disabled'}>Entrar com Google</button>
+      ${fbOk ? '' : '<p style="color:var(--muted);font-size:13px">Login Google ainda não foi ativado neste site.</p>'}
+      <label for="sTok" style="margin-top:16px">Ou: token do GitHub (permissão “gist”)</label>
+      <input id="sTok" type="password" autocomplete="off" spellcheck="false" placeholder="ghp_…">
+      <button type="button" class="tool choice" id="sGist">Conectar com GitHub</button>`,
+    [{ label: 'Fechar', cls: 'ghost' }]);
+    $('sGoogle').onclick = () => connectSync('firebase');
+    $('sGist').onclick = () => {
+      const t = $('sTok').value.trim();
+      if (!t) return toast('Cole o token do GitHub');
+      connectSync('gist', t);
+    };
+  }
+  async function connectSync(kind, token) {
+    modal('Conectando…', '<p>Aguarde, juntando as medições deste aparelho com as da nuvem…</p>', []);
+    try {
+      const st = await Sync.connect(kind, token);
+      closeModal();
+      toast(st.error ? 'Conectado, mas: ' + st.error : 'Sincronização ligada', 4000);
+    } catch (e) {
+      modal('Não foi possível conectar', `<p>${esc(e.message || e)}</p>`,
+        [{ label: 'Voltar', cls: 'primary', onClick: () => { openSync(); return false; } }]);
+    }
+  }
+  $('btnSync').onclick = openSync;
+
+  function applyRemote(items, deleted) {
+    store.items = items;
+    store.deleted = deleted;
+    persist();
+    renderSaved(); renderList();
+    if (selectedId) { if (items.some(x => x.id === selectedId)) selectItem(selectedId); else { selectedId = null; showInfo(false); } }
+  }
+
+  // ---------- Indicador de conexão ----------
+  function renderNet() { $('netBadge').hidden = navigator.onLine; }
+  window.addEventListener('online', renderNet);
+  window.addEventListener('offline', renderNet);
+  renderNet();
 
   // ---------- Busca ----------
   let searchMarker = null;
@@ -686,6 +825,14 @@
   // ---------- Início ----------
   renderSaved();
   renderList();
+  Sync.init({
+    getLocal: () => ({ items: store.items, deleted: store.deleted }),
+    applyLocal: applyRemote,
+    getCfg: () => { try { return JSON.parse(localStorage.getItem(SYNC_KEY) || '{}'); } catch (e) { return {}; } },
+    setCfg: c => { try { localStorage.setItem(SYNC_KEY, JSON.stringify(c)); } catch (e) { /* sem armazenamento */ } },
+    onStatus: renderSyncLine
+  });
+  renderSyncLine(Sync.status());
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }

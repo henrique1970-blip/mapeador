@@ -97,13 +97,17 @@
       <select id="groupFilter"><option value="">Todos os grupos</option></select>
     </div>
     <div class="drawer-summary" id="listSummary"></div>
+    <div class="drawer-summary sync-line" id="syncLine"></div>
     <ul class="list" id="list"></ul>
+    <div class="drawer-foot">
+      <button class="tool primary" id="btnSync">☁ Sincronizar</button>
+    </div>
     <div class="drawer-foot">
       <button class="tool" id="btnImport">Importar KML/GeoJSON</button>
       <button class="tool" id="btnExportAll">Exportar tudo</button>
       <input type="file" id="fileInput" accept=".kml,.geojson,.json,application/vnd.google-earth.kml+xml,application/geo+json" hidden>
     </div>
-    <p class="drawer-note">As medições ficam guardadas neste aparelho. Exporte de vez em quando como cópia de segurança.</p>
+    <p class="drawer-note">As medições ficam guardadas neste aparelho. Ligue a sincronização ou exporte de vez em quando como cópia de segurança. <a href="manual.html" target="_blank" rel="noopener">Manual do usuário</a></p>
   </aside>
 
   <!-- Diálogo genérico -->
@@ -116,11 +120,14 @@
   </div>
 
   <div class="toast" id="toast" hidden></div>
-  <div class="gps-badge" id="gpsBadge" hidden></div>
+  <div class="badges"><div class="gps-badge" id="gpsBadge" hidden></div><div class="gps-badge net" id="netBadge" hidden>Sem internet</div></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="geo.js"></script>
   <script src="formats.js"></script>
+  <script src="offline.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="sync.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
