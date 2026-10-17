@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <title>Mapeador de Áreas</title>
+  <meta name="description" content="Medição de área, distância e pontos no mapa, com GPS.">
+  <meta name="theme-color" content="#1b5e20">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Mapeador">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- Barra superior -->
+  <header class="topbar">
+    <button class="icon-btn" id="btnList" title="Minhas medições" aria-label="Minhas medições">☰</button>
+    <form id="searchForm" class="search">
+      <input id="searchInput" type="search" placeholder="Lugar ou coordenadas (-19.9, -43.9)" autocomplete="off">
+    </form>
+    <button class="icon-btn" id="btnLayers" title="Camadas" aria-label="Camadas">◩</button>
+  </header>
+
+  <!-- Botões laterais -->
+  <div class="side-btns">
+    <button class="round-btn" id="btnLocate" title="Minha localização" aria-label="Minha localização">◎</button>
+  </div>
+
+  <!-- Botão principal: nova medição -->
+  <div class="fab-wrap" id="fabWrap">
+    <div class="fab-menu" id="fabMenu" hidden>
+      <button data-new="area"><span class="dot area"></span>Área</button>
+      <button data-new="distance"><span class="dot dist"></span>Distância</button>
+      <button data-new="poi"><span class="dot poi"></span>Ponto</button>
+    </div>
+    <button class="fab" id="fab" aria-label="Nova medição">＋</button>
+  </div>
+
+  <!-- Painel de medição em andamento -->
+  <section class="panel" id="drawPanel" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-kind" id="drawKind">Área</div>
+        <div class="panel-value" id="drawValue">—</div>
+        <div class="panel-sub" id="drawSub"></div>
+      </div>
+      <button class="icon-btn small" id="btnUnits" title="Unidades" aria-label="Unidades">⚙</button>
+    </div>
+    <div class="panel-hint" id="drawHint">Toque no mapa para marcar os vértices.</div>
+    <div class="vertex-info" id="vertexInfo" hidden></div>
+    <div class="tool-row">
+      <button id="btnMode" class="tool" title="Modo de marcação">✋ Manual</button>
+      <button id="btnAddGps" class="tool" title="Marcar ponto na posição do GPS">📍 Aqui</button>
+      <button id="btnUndo" class="tool" title="Desfazer">↶</button>
+      <button id="btnDelVertex" class="tool" title="Apagar vértice selecionado" disabled>✕ Vértice</button>
+    </div>
+    <div class="tool-row">
+      <button id="btnCancel" class="tool ghost">Cancelar</button>
+      <button id="btnSave" class="tool primary">Salvar</button>
+    </div>
+  </section>
+
+  <!-- Painel de medição salva selecionada -->
+  <section class="panel" id="infoPanel" hidden>
+    <div class="panel-head">
+      <div>
+        <div class="panel-kind" id="infoGroup"></div>
+        <div class="panel-title" id="infoName"></div>
+        <div class="panel-value" id="infoValue"></div>
+        <div class="panel-sub" id="infoSub"></div>
+      </div>
+      <button class="icon-btn small" id="btnInfoClose" aria-label="Fechar">✕</button>
+    </div>
+    <div class="panel-notes" id="infoNotes"></div>
+    <div class="tool-row">
+      <button class="tool" id="btnInfoEdit">✎ Editar</button>
+      <button class="tool" id="btnInfoShare">⇪ Exportar</button>
+      <button class="tool danger" id="btnInfoDelete">🗑 Excluir</button>
+    </div>
+  </section>
+
+  <!-- Gaveta: lista de medições -->
+  <aside class="drawer" id="drawer" hidden>
+    <div class="drawer-head">
+      <h2>Minhas medições</h2>
+      <button class="icon-btn small" id="btnDrawerClose" aria-label="Fechar">✕</button>
+    </div>
+    <div class="drawer-tools">
+      <input id="listFilter" type="search" placeholder="Buscar por nome ou grupo">
+      <select id="groupFilter"><option value="">Todos os grupos</option></select>
+    </div>
+    <div class="drawer-summary" id="listSummary"></div>
+    <ul class="list" id="list"></ul>
+    <div class="drawer-foot">
+      <button class="tool" id="btnImport">Importar KML/GeoJSON</button>
+      <button class="tool" id="btnExportAll">Exportar tudo</button>
+      <input type="file" id="fileInput" accept=".kml,.geojson,.json,application/vnd.google-earth.kml+xml,application/geo+json" hidden>
+    </div>
+    <p class="drawer-note">As medições ficam guardadas neste aparelho. Exporte de vez em quando como cópia de segurança.</p>
+  </aside>
+
+  <!-- Diálogo genérico -->
+  <div class="modal" id="modal" hidden>
+    <div class="modal-box">
+      <h3 id="modalTitle"></h3>
+      <div id="modalBody"></div>
+      <div class="tool-row" id="modalActions"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+  <div class="gps-badge" id="gpsBadge" hidden></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="geo.js"></script>
+  <script src="formats.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
