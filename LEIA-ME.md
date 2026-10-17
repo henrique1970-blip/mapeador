@@ -19,7 +19,7 @@ tocando no mapa ou caminhando com o GPS. Um código só roda em iPhone, Android 
 - **Sincronização entre aparelhos** (☰ › Sincronizar): GitHub Gist (token pessoal com permissão `gist`) já
   funciona; login Google fica disponível depois de ativar o Firebase (`FIREBASE_ATIVAR.md`). Vence a alteração
   mais recente de cada medição; exclusões se propagam.
-- **Manual do usuário**: `manual.html` (link na lista ☰; também abre offline).
+- **Manual do usuário**: `manual.html` e `manual.pdf` (links na lista ☰; também abrem offline). O PDF é gerado do HTML pelo Chrome (impressão A4).
 
 Cálculo geodésico no elipsoide WGS84 (`geo.js`), conferido contra o pyproj: diferença de área
 abaixo de 0,00002 %, perímetro e UTM idênticos ao milímetro.
@@ -28,7 +28,7 @@ abaixo de 0,00002 %, perímetro e UTM idênticos ao milímetro.
 
 `index.html`, `style.css`, `app.js` (interface), `geo.js` (cálculo), `formats.js` (KML/GeoJSON/CSV),
 `offline.js` (download de mapa), `sync.js` (sincronização), `firebase-config.js` (login Google, `null` até ativar),
-`sw.js` (offline), `manual.html`, `manifest.webmanifest` e `icons/` (instalação).
+`sw.js` (offline), `manual.html`, `manual.pdf`, `manifest.webmanifest` e `icons/` (instalação).
 
 ## Testar no PC
 
