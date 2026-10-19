@@ -108,7 +108,7 @@ usar sua localização. Toque em <b>Permitir</b>. Se recusou por engano, veja <a
 <table>
   <tr><th>Botão</th><th>Para que serve</th></tr>
   <tr><td><span class="k">☰</span> (alto, à esquerda)</td><td>Abre a lista das suas medições, a sincronização, a importação e a exportação.</td></tr>
-  <tr><td>Barra de busca</td><td>Procura uma cidade, um endereço ou uma coordenada (por exemplo <span class="k">-19.9, -43.95</span>).</td></tr>
+  <tr><td>Barra de busca</td><td>Procura uma cidade, um endereço ou uma coordenada, em graus decimais (<span class="k">-19.9, -43.95</span>) ou em graus, minutos e segundos (<span class="k">19°54'00"S 43°57'00"O</span>; aceita N/S e L/O ou E/W).</td></tr>
   <tr><td><span class="k">◩</span> (alto, à direita)</td><td>Tipo de mapa, unidades de medida, ajustes do GPS e download do mapa para usar sem internet.</td></tr>
   <tr><td><span class="k">◎</span></td><td>Mostra onde você está e faz o mapa seguir você. Se você arrastar o mapa, um toque volta a centralizar; tocar enquanto o mapa está seguindo desliga o GPS.</td></tr>
   <tr><td><span class="k">＋</span> (canto de baixo)</td><td>Começa uma medição nova: <b>Área</b>, <b>Distância</b> ou <b>Ponto</b>.</td></tr>
@@ -132,24 +132,38 @@ usar sua localização. Toque em <b>Permitir</b>. Se recusou por engano, veja <a
 <ol class="steps">
   <li>Vá até um canto do terreno.</li>
   <li>Toque em <span class="k">＋</span> e escolha <span class="k">Área</span> (ou <span class="k">Distância</span> para medir um caminho).</li>
-  <li>Toque em <span class="k">✋ Manual</span>; o botão vira <span class="k">🚶 GPS ligado</span>.</li>
+  <li>Toque em <span class="k">✋ Manual</span>; o botão vira <span class="k">🚶 GPS</span> (verde) e aparece <span class="k">⏸ Pausar</span>.</li>
   <li>Espere o selo <b>GPS ±… m</b> mostrar um número pequeno (até 10 m é bom) e comece a andar pela divisa.</li>
   <li>O aplicativo marca um ponto sozinho a cada 5 metros. Pontos com sinal ruim (pior que 25 m) são ignorados.</li>
-  <li>Ao voltar ao início, toque em <span class="k">🚶 GPS ligado</span> para desligar e depois em <span class="k">Salvar</span>.</li>
+  <li>Precisa contornar um obstáculo, abrir uma porteira ou parar? Toque em <span class="k">⏸ Pausar</span>: nada é marcado
+  até você tocar em <span class="k">▶ Continuar</span>. Ao continuar, o ponto onde você está entra na hora.</li>
+  <li>Ao voltar ao início, toque em <span class="k">🚶 GPS</span> para desligar e depois em <span class="k">Salvar</span>.</li>
 </ol>
 <div class="note"><b>Mantenha a tela ligada</b> e o aplicativo aberto durante a caminhada. Se a tela bloquear ou você
 trocar de aplicativo, o GPS para de marcar (principalmente no iPhone). O Mapeador pede ao aparelho para não apagar a tela.</div>
 <p><b>Marcação manual com GPS:</b> se preferir marcar só os cantos, deixe em <span class="k">✋ Manual</span>, pare em
 cada canto e toque em <span class="k">📍 Aqui</span>. O ponto entra exatamente onde você está.</p>
-<p>A distância entre pontos e a precisão mínima podem ser mudadas em <span class="k">◩</span>.</p>
+<p><b>O que o aplicativo faz sozinho para o desenho ficar limpo:</b></p>
+<ul>
+  <li><b>Pulos do GPS são descartados.</b> Se uma posição salta muito mais longe que os passos anteriores (mais de 3 vezes a
+  média e mais de 10 m), ela é ignorada. Se o salto se repetir três vezes seguidas, o aplicativo entende que você realmente
+  andou mais rápido e volta a marcar.</li>
+  <li><b>Trechos retos viram um lado só.</b> Enquanto você anda em linha reta, os pontos do meio são trocados pelo mais novo,
+  em vez de virar dezenas de vértices. Um ponto só é mantido quando o caminho se desvia mais de 1 m da reta. Pontos que você
+  marcou à mão ou arrastou nunca são trocados.</li>
+</ul>
+<p>A distância entre pontos, a precisão mínima e a tolerância de reta (0 desliga) podem ser mudadas em <span class="k">◩</span>.</p>
 
 <h2 id="ajustar">5. Ajustar o desenho</h2>
 <table>
   <tr><th>Quero…</th><th>Como fazer</th></tr>
   <tr><td>Mover um canto</td><td>Arraste a bolinha branca do vértice.</td></tr>
   <tr><td>Inserir um canto no meio de um lado</td><td>Toque (ou arraste) a bolinha menor no meio do lado.</td></tr>
-  <tr><td>Apagar um canto</td><td>Toque no vértice para selecioná-lo e depois em <span class="k">✕ Vértice</span>.</td></tr>
+  <tr><td>Apagar um canto</td><td>Toque no vértice para selecioná-lo e depois em <span class="k">✕ Apagar</span>, ao lado da coordenada dele.</td></tr>
   <tr><td>Desfazer o último passo</td><td><span class="k">↶</span> (no computador: <span class="k">Ctrl+Z</span>).</td></tr>
+  <tr><td>Refazer o que desfez</td><td><span class="k">↷</span> (no computador: <span class="k">Ctrl+Y</span>).</td></tr>
+  <tr><td>Jogar fora todas as mudanças de uma medição salva</td><td><span class="k">⟲</span>, que só aparece ao editar. Volta ao desenho salvo; <span class="k">↶</span> desfaz isso.</td></tr>
+  <tr><td>Marcar com precisão, sem o dedo tapar o ponto</td><td><span class="k">⌖ Mira</span>: aparece uma cruz vermelha no meio do mapa. Arraste o mapa até a cruz ficar sobre o canto e toque no <span class="k">＋</span> vermelho. O painel mostra a coordenada da cruz e a distância até o vértice selecionado. Toque em <span class="k">⌖ Mira</span> de novo para voltar a marcar tocando no mapa.</td></tr>
   <tr><td>Ver a coordenada de um canto</td><td>Toque no vértice: aparecem latitude/longitude e UTM.</td></tr>
   <tr><td>Desistir</td><td><span class="k">Cancelar</span>.</td></tr>
 </table>
@@ -209,6 +223,10 @@ download em lote; deles fica guardado só o que você já olhou.</div>
 <p>Sem sincronização, cada aparelho guarda só as próprias medições. Ligando a sincronização com a <b>mesma conta</b> em todos
 os aparelhos (celular, tablet, computador), as medições se juntam e passam a aparecer em todos. Uma medição apagada
 em um aparelho some dos outros.</p>
+<div class="note"><b>Sincronizar não é a mesma coisa que exportar KML.</b> A sincronização leva as próprias medições de
+um aparelho para o outro, sozinha, sem gerar arquivo nenhum. O KML (e o GeoJSON e o CSV) da <a href="#exportar">seção 8</a>
+serve para levar os dados <b>para fora</b> do Mapeador: Google Earth, QGIS, um aparelho GPS, ou mandar para outra pessoa.
+Sem sincronização, também dá para passar medições de um aparelho para outro na mão: exporte o KML num e importe no outro.</div>
 
 <h3>Opção A: conta Google</h3>
 <ol class="steps">
@@ -241,10 +259,14 @@ gist <b>secreto</b>: ele não aparece em buscas, mas quem tiver o endereço exat
 <h2 id="unidades">11. Mapas e unidades</h2>
 <p>Em <span class="k">◩</span> você escolhe:</p>
 <ul>
-  <li><b>Mapa:</b> satélite com nomes de ruas e cidades, satélite puro, ruas (OpenStreetMap) ou topográfico (com curvas de nível).</li>
+  <li><b>Mapa:</b> satélite com nomes de ruas e cidades, satélite puro, ruas (OpenStreetMap) ou topográfico (com curvas de nível).
+  As imagens de satélite (Esri) costumam ter detalhe até o zoom 17 na zona rural e até o 19 nas cidades. Aproximando além
+  disso, o Mapeador amplia a imagem mais detalhada que existe ali: fica menos nítida, mas não aparece mais o quadro cinza
+  "Map data not yet available".</li>
   <li><b>Unidade de área:</b> hectares, metros quadrados, quilômetros quadrados, alqueire paulista (24.200 m²), alqueire mineiro/goiano (48.400 m²) ou acres. O painel sempre mostra também outras duas unidades.</li>
   <li><b>Unidade de distância:</b> metros, quilômetros, milhas ou pés.</li>
-  <li><b>GPS:</b> de quantos em quantos metros marcar um ponto e qual a pior precisão aceita.</li>
+  <li><b>Coordenadas:</b> graus decimais, graus e minutos, ou graus, minutos e segundos. Vale para pontos e vértices; o UTM aparece sempre junto.</li>
+  <li><b>GPS:</b> de quantos em quantos metros marcar um ponto, qual a pior precisão aceita e a tolerância para simplificar trechos retos.</li>
   <li><b>Nomes das medições:</b> mostra ou esconde os rótulos no mapa.</li>
 </ul>
 <p>As áreas são calculadas sobre o elipsoide WGS84 (o mesmo do GPS e, para efeito prático, do SIRGAS 2000), com a precisão de

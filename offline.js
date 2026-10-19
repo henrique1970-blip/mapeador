@@ -25,6 +25,17 @@
     }
     return out;
   }
+  // URLs dos blocos de disponibilidade da Esri (tilemap) que cobrem a área, em blocos size×size alinhados
+  function blockList(bounds, zMin, zMax, prefix, size) {
+    const out = [], a = v => Math.floor(v / size) * size;
+    for (let z = zMin; z <= zMax; z++) {
+      const n = 2 ** z;
+      const x0 = a(Math.max(0, lon2x(bounds.getWest(), z))), x1 = Math.min(n - 1, lon2x(bounds.getEast(), z));
+      const y0 = a(Math.max(0, lat2y(bounds.getNorth(), z))), y1 = Math.min(n - 1, lat2y(bounds.getSouth(), z));
+      for (let x = x0; x <= x1; x += size) for (let y = y0; y <= y1; y += size) out.push(`${prefix}${z}/${y}/${x}/${size}/${size}`);
+    }
+    return out;
+  }
   function count(bounds, zMin, zMax, nLayers) {
     let c = 0;
     for (let z = zMin; z <= zMax; z++) {
@@ -68,5 +79,5 @@
   }
   async function clear() { await caches.delete(CACHE); }
 
-  root.Offline = { tileList, count, download, info, clear, stop: () => { cancel = true; }, MAX_TILES };
+  root.Offline = { tileList, blockList, count, download, info, clear, stop: () => { cancel = true; }, MAX_TILES };
 })(window);

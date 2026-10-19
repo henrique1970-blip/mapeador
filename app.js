@@ -30,7 +30,8 @@
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
   // ---------- Armazenamento ----------
-  const defaults = { areaUnit: 'ha', lenUnit: 'm', layer: 'hybrid', labels: true, gpsMinDist: 5, gpsMaxAcc: 25, view: null };
+  const defaults = { areaUnit: 'ha', lenUnit: 'm', layer: 'hybrid', labels: true, gpsMinDist: 5, gpsMaxAcc: 25,
+    gpsStraight: 1, coordFmt: 'dd', view: null };
   // deleted: marcas de exclusão {id, updated}, para a exclusão chegar aos outros aparelhos
   let store = { items: [], deleted: [], settings: Object.assign({}, defaults) };
   try {
@@ -67,8 +68,40 @@
       return `${fmtArea(v.area_m2, S.areaUnit)} · perímetro ${fmtLen(v.length_m, S.lenUnit)}`;
     }
     if (m.type === 'distance') return fmtLen(measure(m).length_m, S.lenUnit);
-    const p = m.points[0];
-    return `${p[0].toFixed(6)}, ${p[1].toFixed(6)}`;
+    return fmtLL(m.points[0]);
+  }
+  // ---------- Coordenadas ----------
+  const COORD_FMTS = {
+    dd: { label: 'Graus decimais (-19.923456)' },
+    ddm: { label: 'Graus e minutos (19° 55,4074′ S)' },
+    dms: { label: 'Graus, minutos e segundos (19° 55′ 24,44″ S)' }
+  };
+  // arredonda no total (segundos ou minutos) para não gerar 60″ ou 60′
+  function fmtDeg(v, pos, neg) {
+    const h = v < 0 ? neg : pos, a = Math.abs(v);
+    if (S.coordFmt === 'ddm') {
+      const tm = Math.round(a * 60 * 1e4) / 1e4, d = Math.floor(tm / 60);
+      return `${d}° ${nf(tm - d * 60, 4)}′ ${h}`;
+    }
+    const ts = Math.round(a * 3600 * 100) / 100, d = Math.floor(ts / 3600), mi = Math.floor((ts - d * 3600) / 60);
+    return `${d}° ${String(mi).padStart(2, '0')}′ ${nf(ts - d * 3600 - mi * 60, 2)}″ ${h}`;
+  }
+  function fmtLL(p) {
+    if (S.coordFmt !== 'ddm' && S.coordFmt !== 'dms') return `${p[0].toFixed(6)}, ${p[1].toFixed(6)}`;
+    return `${fmtDeg(p[0], 'N', 'S')}  ${fmtDeg(p[1], 'L', 'O')}`;
+  }
+  // "19°55'24.4"S 43°56'W" → [lat, lon]; hemisfério em português (L/O) ou inglês (E/W)
+  function parseDMSPair(q) {
+    const num = '(\\d+(?:[.,]\\d+)?)';
+    const re = new RegExp(`${num}\\s*[°º]\\s*(?:${num}\\s*['′’]\\s*)?(?:${num}\\s*(?:["″”]|''|′′)\\s*)?([NSLOEW])`, 'gi');
+    let lat = null, lon = null, m;
+    while ((m = re.exec(q))) {
+      const v = [m[1], m[2], m[3]].map(x => x ? parseFloat(x.replace(',', '.')) : 0);
+      const h = m[4].toUpperCase();
+      const dec = (v[0] + v[1] / 60 + v[2] / 3600) * (/[SOW]/.test(h) ? -1 : 1);
+      if (/[NS]/.test(h)) lat = dec; else lon = dec;
+    }
+    return lat != null && lon != null && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? [lat, lon] : null;
   }
   function utmText(p) {
     const u = Geo.toUTM(p[0], p[1]);
@@ -90,7 +123,62 @@
   const ESRI_SAT = esri + 'World_Imagery/MapServer/tile/{z}/{y}/{x}';
   const ESRI_ROADS = esri + 'Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}';
   const ESRI_PLACES = esri + 'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
-  const sat = () => tl(ESRI_SAT, { attribution: esriAttr });
+  // Onde a Esri não tem imagem no zoom pedido (comum em área rural acima do 17), ela devolve um bloco cinza
+  // "Map data not yet available". O serviço tilemap diz onde há imagem; o bloco sem imagem é desenhado
+  // ampliando o ancestral mais próximo que tem.
+  const ESRI_TILEMAP = esri + 'World_Imagery/MapServer/tilemap/';
+  const TM = 16; // blocos de disponibilidade 16×16 alinhados: o download offline pede as mesmas URLs
+  const tmCache = new Map();
+  function tmBlock(z, y, x) {
+    const key = `${z}/${Math.floor(y / TM) * TM}/${Math.floor(x / TM) * TM}`;
+    if (!tmCache.has(key)) {
+      tmCache.set(key, fetch(`${ESRI_TILEMAP}${key}/${TM}/${TM}`, { mode: 'cors' })
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null)
+        .then(j => { if (!j) tmCache.delete(key); return j; })); // sem rede: tenta de novo depois
+    }
+    return tmCache.get(key);
+  }
+  // true / false, ou null quando não dá para saber (sem rede, resposta estranha)
+  async function hasImagery(z, y, x) {
+    const j = await tmBlock(z, y, x);
+    if (!j || !j.valid || !Array.isArray(j.data) || !j.location) return null;
+    const c = x - j.location.left, r = y - j.location.top;
+    if (c < 0 || r < 0 || c >= j.location.width || r >= j.location.height) return null;
+    const v = j.data[r * j.location.width + c];
+    return v == null ? null : !!v;
+  }
+  function loadImg(url) {
+    return new Promise((ok, fail) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => ok(img);
+      img.onerror = () => fail(new Error('tile'));
+      img.src = url;
+    });
+  }
+  const EsriSat = L.GridLayer.extend({
+    createTile(c, done) {
+      const tile = document.createElement('canvas');
+      tile.width = tile.height = 256;
+      this._fill(c, tile).then(() => done(null, tile), err => done(err, tile));
+      return tile;
+    },
+    async _fill(c, tile) {
+      // desce no máximo 6 níveis (ampliação de 64×) atrás de imagem; "não sei" conta como "tem"
+      let z = Math.min(c.z, 19);
+      for (let k = 0; k < 6 && z > 1; k++) {
+        const s = 2 ** (c.z - z);
+        if ((await hasImagery(z, Math.floor(c.y / s), Math.floor(c.x / s))) !== false) break;
+        z--;
+      }
+      const s = 2 ** (c.z - z), ax = Math.floor(c.x / s), ay = Math.floor(c.y / s), w = 256 / s;
+      const img = await loadImg(ESRI_SAT.replace('{z}', z).replace('{y}', ay).replace('{x}', ax));
+      tile.getContext('2d').drawImage(img, (c.x - ax * s) * w, (c.y - ay * s) * w, w, w, 0, 0, 256, 256);
+      tile.dataset.z = z; // zoom de onde a imagem veio (usado nos testes)
+    }
+  });
+  const sat = () => new EsriSat({ maxZoom: 21, attribution: esriAttr });
   // offline: só as camadas cujo provedor não proíbe download em lote (OSM e OpenTopoMap proíbem)
   const BASES = {
     hybrid: { label: 'Satélite com nomes', offline: [ESRI_SAT, ESRI_ROADS, ESRI_PLACES],
@@ -191,7 +279,7 @@
       $('infoSub').textContent = `${m.points.length} pontos`;
     } else {
       const p = m.points[0];
-      $('infoValue').textContent = `${p[0].toFixed(6)}, ${p[1].toFixed(6)}`;
+      $('infoValue').textContent = fmtLL(p);
       $('infoSub').textContent = utmText(p);
     }
     $('infoNotes').textContent = m.notes || '';
@@ -229,7 +317,8 @@
   };
 
   // ---------- Desenho / edição ----------
-  let cur = null; // { item, editingId, history, sel, mode, dirty }
+  // { item, editingId, original, history, future, sel, mode, paused, aim, run, dirty }
+  let cur = null;
 
   function startDraw(type, existing) {
     closeFabMenu();
@@ -238,14 +327,16 @@
     const item = existing
       ? JSON.parse(JSON.stringify(existing))
       : { id: uid(), type, name: '', group: '', color: TYPE_COLOR[type], notes: '', points: [] };
-    cur = { item, editingId: existing ? existing.id : null, history: [], sel: item.points.length - 1, mode: 'manual', dirty: false };
+    cur = { item, editingId: existing ? existing.id : null, original: existing ? item.points.map(p => p.slice()) : null,
+      history: [], future: [], sel: item.points.length - 1, mode: 'manual', paused: false, aim: false, run: null, dirty: false };
     map.doubleClickZoom.disable();
     $('fabWrap').hidden = true;
     $('drawPanel').hidden = false;
     $('drawKind').textContent = (existing ? 'Editando · ' : 'Nova ') + TYPE_LABEL[type].toLowerCase();
     $('btnMode').hidden = type === 'poi';
-    $('btnDelVertex').hidden = type === 'poi';
+    $('btnReset').hidden = !existing;
     setMode('manual');
+    setAim(false);
     renderSaved();
     redraw();
     if (existing) fitItem(existing);
@@ -253,15 +344,18 @@
   function endDraw() {
     if (cur && cur.mode === 'gps') stopGpsRecording();
     cur = null;
+    $('aim').hidden = true;
     editLayer.clearLayers();
     map.doubleClickZoom.enable();
     $('drawPanel').hidden = true;
     $('fabWrap').hidden = false;
     renderSaved();
   }
+  const stateNow = () => ({ points: cur.item.points.map(p => p.slice()), sel: cur.sel });
   function snapshot() {
-    cur.history.push({ points: cur.item.points.map(p => p.slice()), sel: cur.sel });
+    cur.history.push(stateNow());
     if (cur.history.length > 200) cur.history.shift();
+    cur.future = []; // alteração nova invalida o que foi desfeito
     cur.dirty = true;
   }
   function addPoint(latlng) {
@@ -339,37 +433,88 @@
       if (pts.length >= 2) { val = fmtLen(Geo.length(pts, false), S.lenUnit); sub = `${pts.length} pontos`; }
       else sub = pts.length ? 'Marque o próximo ponto' : '';
     } else if (pts.length) {
-      val = `${pts[0][0].toFixed(6)}, ${pts[0][1].toFixed(6)}`;
+      val = fmtLL(pts[0]);
       sub = utmText(pts[0]);
     }
     $('drawValue').textContent = val;
     $('drawSub').textContent = sub;
     const sp = pts[cur.sel];
-    const vi = $('vertexInfo');
-    if (sp && m.type !== 'poi') {
+    const vi = $('vertexInfo'), vt = $('vertexText');
+    if (cur.aim) {
+      const c = aimLatLng(), ref = m.type === 'poi' ? null : pts[cur.sel];
       vi.hidden = false;
-      vi.textContent = `Vértice ${cur.sel + 1}: ${sp[0].toFixed(6)}, ${sp[1].toFixed(6)}\n${utmText(sp)}`;
-      vi.style.whiteSpace = 'pre-wrap';
+      vt.textContent = `Mira: ${fmtLL(c)}\n${utmText(c)}` + (ref ? ` · ${fmtLen(Geo.distance(ref, c), S.lenUnit)} do vértice ${cur.sel + 1}` : '');
+    } else if (sp && m.type !== 'poi') {
+      vi.hidden = false;
+      vt.textContent = `Vértice ${cur.sel + 1}: ${fmtLL(sp)}\n${utmText(sp)}`;
     } else vi.hidden = true;
     $('btnUndo').disabled = !cur.history.length;
-    $('btnDelVertex').disabled = !sp;
+    $('btnRedo').disabled = !cur.future.length;
+    // com a mira ligada a linha mostra a mira, não o vértice: o apagar some para não confundir
+    $('btnDelVertex').hidden = !sp || cur.aim || m.type === 'poi';
     let hint;
-    if (cur.mode === 'gps') hint = `Caminhe pelo contorno. Um ponto é marcado a cada ${S.gpsMinDist} m, com precisão de até ${S.gpsMaxAcc} m.`;
+    if (cur.mode === 'gps' && cur.paused) hint = 'Gravação pausada. Ande sem marcar e toque em “▶ Continuar” no próximo trecho; “📍 Aqui” marca um ponto avulso.';
+    else if (cur.mode === 'gps') hint = `Caminhe pelo contorno. Um ponto é marcado a cada ${S.gpsMinDist} m, com precisão de até ${S.gpsMaxAcc} m.`;
+    else if (cur.aim) hint = 'Arraste o mapa até a mira ficar sobre o ponto e toque no ＋ vermelho.';
     else if (m.type === 'poi') hint = 'Toque no mapa ou use “📍 Aqui” para marcar o ponto. Arraste para ajustar.';
     else hint = 'Toque no mapa para marcar. Arraste um vértice para ajustar; toque no ponto do meio de um lado para inserir.';
     $('drawHint').textContent = hint;
+    if (cur.aim) placeAim();
   }
 
   map.on('click', e => {
-    if (!cur || cur.mode === 'gps') return;
+    if (!cur || cur.aim || (cur.mode === 'gps' && !cur.paused)) return;
     addPoint([e.latlng.lat, e.latlng.lng]);
   });
 
+  // ---------- Mira ----------
+  // centro da parte do mapa que fica entre a barra de busca e o painel
+  function aimPoint() {
+    const top = document.querySelector('.topbar').getBoundingClientRect().bottom;
+    const bottom = $('drawPanel').hidden ? window.innerHeight : $('drawPanel').getBoundingClientRect().top;
+    return L.point(window.innerWidth / 2, (top + bottom) / 2);
+  }
+  function aimLatLng() {
+    const ll = map.containerPointToLatLng(aimPoint());
+    return [ll.lat, ll.lng];
+  }
+  function placeAim() { $('aim').style.top = aimPoint().y + 'px'; }
+  function setAim(on) {
+    if (!cur) return;
+    cur.aim = on;
+    $('aim').hidden = !on;
+    $('btnAim').classList.toggle('on', on);
+    if (on) placeAim();
+    updateDrawPanel();
+  }
+  $('btnAim').onclick = () => setAim(!cur.aim);
+  $('btnAimAdd').onclick = e => {
+    L.DomEvent.stop(e);
+    if (cur) addPoint(aimLatLng());
+  };
+  map.on('move', () => { if (cur && cur.aim) updateDrawPanel(); });
+  window.addEventListener('resize', () => { if (cur && cur.aim) placeAim(); });
+
+  // ---------- Desfazer / refazer ----------
+  function restore(h) { cur.item.points = h.points; cur.sel = h.sel; redraw(); }
   function undo() {
     if (!cur || !cur.history.length) return;
-    const h = cur.history.pop();
-    cur.item.points = h.points; cur.sel = h.sel;
-    redraw();
+    cur.future.push(stateNow());
+    restore(cur.history.pop());
+  }
+  function redo() {
+    if (!cur || !cur.future.length) return;
+    cur.history.push(stateNow());
+    restore(cur.future.pop());
+  }
+  function resetOriginal() {
+    if (!cur || !cur.original) return;
+    confirmBox('Voltar ao original', 'Descartar todas as alterações e voltar ao desenho salvo? Se mudar de ideia, toque em ↶.', 'Voltar', () => {
+      snapshot();
+      cur.item.points = cur.original.map(p => p.slice());
+      cur.sel = cur.item.points.length - 1;
+      redraw();
+    });
   }
   function deleteVertex() {
     if (!cur || cur.item.points[cur.sel] == null) return;
@@ -379,10 +524,14 @@
     redraw();
   }
   $('btnUndo').onclick = undo;
+  $('btnRedo').onclick = redo;
+  $('btnReset').onclick = resetOriginal;
   $('btnDelVertex').onclick = deleteVertex;
   document.addEventListener('keydown', e => {
     if (!cur || /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || !$('modal').hidden) return;
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); undo(); }
+    const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
+    if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
+    else if (mod && k === 'z') { e.preventDefault(); undo(); }
     else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteVertex(); }
   });
 
@@ -495,13 +644,62 @@
     map.panTo(f.ll);
   });
 
+  // Filtro de saltos: descarta a posição cujo passo passa de 3× a média dos últimos 6 (e de 10 m).
+  // Depois de 3 descartes seguidos aceita, para não travar quando a pessoa realmente acelerou.
+  const jump = { prev: null, steps: [], rejects: 0 };
+  function resetJump() { jump.prev = null; jump.steps = []; jump.rejects = 0; }
+  function jumpOk(f) {
+    if (!f.ll[0] && !f.ll[1]) return false;
+    if (jump.prev && f.t - jump.prev.t > 120000) jump.steps = [];
+    if (jump.prev) {
+      const step = Geo.distance(jump.prev.ll, f.ll);
+      if (jump.steps.length >= 3) {
+        const mean = jump.steps.reduce((s, x) => s + x, 0) / jump.steps.length;
+        if (step > Math.max(3 * mean, 10) && jump.rejects < 3) { jump.rejects++; return false; }
+      }
+      jump.steps.push(step);
+      if (jump.steps.length > 6) jump.steps.shift();
+    }
+    jump.rejects = 0;
+    jump.prev = f;
+    return true;
+  }
+  // distância (m) de p ao segmento a–b, num plano local em torno de a
+  function offLine(p, a, b) {
+    const k = Math.cos(a[0] * Math.PI / 180), R = 6371008.8 * Math.PI / 180;
+    const P = [(p[1] - a[1]) * k * R, (p[0] - a[0]) * R], B = [(b[1] - a[1]) * k * R, (b[0] - a[0]) * R];
+    const L2 = B[0] * B[0] + B[1] * B[1];
+    const t = L2 ? Math.max(0, Math.min(1, (P[0] * B[0] + P[1] * B[1]) / L2)) : 0;
+    return Math.hypot(P[0] - t * B[0], P[1] - t * B[1]);
+  }
   function gpsRecord(f) {
-    if (f.acc > S.gpsMaxAcc) return;
+    if (cur.paused || f.acc > S.gpsMaxAcc || !jumpOk(f)) return;
     const pts = cur.item.points;
     const last = pts[pts.length - 1];
     if (last && Geo.distance(last, f.ll) < S.gpsMinDist) return;
+    // Trecho reto: se o último ponto gravado (e os que ele já substituiu) cabem a menos de gpsStraight m
+    // da reta entre o penúltimo e a posição nova, ele é trocado pela nova em vez de somar mais um vértice.
+    // Só vale quando os dois últimos vértices ainda são os gravados por este trecho: ponto marcado à mão,
+    // arrastado ou desfeito nunca é substituído.
+    const run = cur.run, same = (p, q) => !!p && !!q && p[0] === q[0] && p[1] === q[1];
+    const prev = pts[pts.length - 2];
+    if (run && !same(last, run.b)) { run.a = run.b = null; run.skipped = []; }
+    if (S.gpsStraight > 0 && run && run.a && same(prev, run.a)) {
+      const cand = run.skipped.concat([last]);
+      if (cand.every(p => offLine(p, prev, f.ll) < S.gpsStraight)) {
+        snapshot();
+        run.skipped = cand;
+        pts[pts.length - 1] = f.ll.slice();
+        run.b = pts[pts.length - 1].slice();
+        cur.sel = pts.length - 1;
+        redraw();
+        map.panTo(f.ll);
+        return;
+      }
+    }
     cur.sel = pts.length - 1;
     addPoint(f.ll);
+    if (run) { run.a = run.b ? run.b : null; run.b = f.ll.slice(); run.skipped = []; }
     map.panTo(f.ll);
   }
   async function requestWake() {
@@ -519,19 +717,36 @@
       if (!startLocate()) return;
       cur.mode = 'gps'; follow = true;
       requestWake();
-      $('btnMode').textContent = '🚶 GPS ligado';
+      $('btnMode').textContent = '🚶 GPS';
       $('btnMode').classList.add('on');
+      setAim(false);
+      setPaused(false);
       toast('Gravação por GPS: caminhe pelo contorno');
-      if (lastFix) gpsRecord(lastFix);
     } else {
       if (cur.mode === 'gps') stopGpsRecording();
       cur.mode = 'manual';
+      cur.paused = false; cur.run = null;
       $('btnMode').textContent = '✋ Manual';
       $('btnMode').classList.remove('on');
+      $('btnPause').hidden = true;
+    }
+    updateDrawPanel();
+  }
+  // cada retomada começa um trecho novo: o filtro de saltos e a simplificação de retas não ligam trechos diferentes
+  function setPaused(p) {
+    cur.paused = p;
+    $('btnPause').hidden = false;
+    $('btnPause').textContent = p ? '▶ Continuar' : '⏸ Pausar';
+    $('btnPause').classList.toggle('on', p);
+    if (!p) {
+      cur.run = { a: null, b: null, skipped: [] };
+      resetJump();
+      if (lastFix && Date.now() - lastFix.t < 10000) gpsRecord(lastFix);
     }
     updateDrawPanel();
   }
   $('btnMode').onclick = () => setMode(cur.mode === 'gps' ? 'manual' : 'gps');
+  $('btnPause').onclick = () => { if (cur && cur.mode === 'gps') setPaused(!cur.paused); };
 
   // ---------- Botão de nova medição ----------
   function closeFabMenu() { $('fabMenu').hidden = true; $('fab').textContent = '＋'; }
@@ -653,8 +868,11 @@
       <label class="layer-opt"><input type="checkbox" id="fLabels" ${S.labels ? 'checked' : ''}>Mostrar nomes das medições</label>
       <div class="row2"><div><label for="fAU">Área</label><select id="fAU">${opt(AREA_UNITS, S.areaUnit)}</select></div>
       <div><label for="fLU">Distância</label><select id="fLU">${opt(LEN_UNITS, S.lenUnit)}</select></div></div>
+      <label for="fCF">Coordenadas</label><select id="fCF">${opt(COORD_FMTS, S.coordFmt)}</select>
       <div class="row2"><div><label for="fGD">GPS: marcar a cada (m)</label><input id="fGD" type="number" min="1" max="500" value="${S.gpsMinDist}"></div>
-      <div><label for="fGA">GPS: precisão mínima (m)</label><input id="fGA" type="number" min="3" max="200" value="${S.gpsMaxAcc}"></div></div>`,
+      <div><label for="fGA">GPS: precisão mínima (m)</label><input id="fGA" type="number" min="3" max="200" value="${S.gpsMaxAcc}"></div></div>
+      <label for="fGS">GPS: simplificar trechos retos (m; 0 desliga)</label>
+      <input id="fGS" type="number" min="0" max="20" step="0.5" value="${S.gpsStraight}">`,
     [{ label: '⬇ Mapa offline', onClick: () => { applySettings(); openOffline(); return false; } },
       { label: 'Fechar', cls: 'primary', onClick: applySettings }]);
   }
@@ -666,6 +884,9 @@
     S.lenUnit = $('fLU').value;
     S.gpsMinDist = Math.max(1, +$('fGD').value || defaults.gpsMinDist);
     S.gpsMaxAcc = Math.max(3, +$('fGA').value || defaults.gpsMaxAcc);
+    const gs = parseFloat($('fGS').value);
+    S.gpsStraight = isFinite(gs) ? Math.min(20, Math.max(0, gs)) : defaults.gpsStraight;
+    S.coordFmt = COORD_FMTS[$('fCF').value] ? $('fCF').value : 'dd';
     persist(); renderSaved(); renderList();
     if (cur) redraw(); else if (selectedId) selectItem(selectedId);
   }
@@ -703,7 +924,10 @@
       } },
       { label: 'Fechar', cls: 'ghost' }]
       .concat(def == null ? [] : [{ label: 'Baixar', cls: 'primary', onClick: () => {
-        startDownload(Offline.tileList(bounds, zMin, +$('fZ').value, templates));
+        const zMax = +$('fZ').value;
+        // com o mapa de disponibilidade guardado, o satélite sabe offline onde ampliar o zoom anterior
+        startDownload(Offline.tileList(bounds, zMin, zMax, templates).concat(templates.includes(ESRI_SAT)
+          ? Offline.blockList(bounds, zMin, Math.min(zMax, 19), ESRI_TILEMAP, TM) : []));
         return false;
       } }]));
     Offline.info().then(i => {
@@ -809,6 +1033,8 @@
       const a = parseFloat(m[1].replace(',', '.')), b = parseFloat(m[2].replace(',', '.'));
       if (Math.abs(a) <= 90 && Math.abs(b) <= 180) ll = [a, b];
     }
+    const dms = !ll && parseDMSPair(q);
+    if (dms) ll = dms;
     if (!ll) {
       try {
         const r = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=pt-BR&q=' + encodeURIComponent(q));
@@ -819,7 +1045,7 @@
     if (!ll) return toast('Lugar não encontrado');
     if (searchMarker) map.removeLayer(searchMarker);
     searchMarker = L.marker(ll).addTo(map).bindPopup(esc(label)).openPopup();
-    map.setView(ll, m ? 17 : 14);
+    map.setView(ll, m || dms ? 17 : 14);
   };
 
   // ---------- Início ----------

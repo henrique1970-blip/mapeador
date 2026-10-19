@@ -43,6 +43,12 @@
     <button class="fab" id="fab" aria-label="Nova medição">＋</button>
   </div>
 
+  <!-- Mira para marcar pelo centro do mapa -->
+  <div class="aim" id="aim" hidden>
+    <div class="aim-cross"></div>
+    <button class="aim-add" id="btnAimAdd" aria-label="Marcar ponto na mira">＋</button>
+  </div>
+
   <!-- Painel de medição em andamento -->
   <section class="panel" id="drawPanel" hidden>
     <div class="panel-head">
@@ -54,15 +60,21 @@
       <button class="icon-btn small" id="btnUnits" title="Unidades" aria-label="Unidades">⚙</button>
     </div>
     <div class="panel-hint" id="drawHint">Toque no mapa para marcar os vértices.</div>
-    <div class="vertex-info" id="vertexInfo" hidden></div>
+    <div class="vertex-info" id="vertexInfo" hidden>
+      <span id="vertexText"></span>
+      <button id="btnDelVertex" class="tool mini danger" title="Apagar vértice selecionado">✕ Apagar</button>
+    </div>
     <div class="tool-row">
       <button id="btnMode" class="tool" title="Modo de marcação">✋ Manual</button>
+      <button id="btnPause" class="tool" title="Pausar a gravação por GPS" hidden>⏸ Pausar</button>
       <button id="btnAddGps" class="tool" title="Marcar ponto na posição do GPS">📍 Aqui</button>
-      <button id="btnUndo" class="tool" title="Desfazer">↶</button>
-      <button id="btnDelVertex" class="tool" title="Apagar vértice selecionado" disabled>✕ Vértice</button>
+      <button id="btnAim" class="tool" title="Marcar pela mira no centro do mapa">⌖ Mira</button>
     </div>
     <div class="tool-row">
       <button id="btnCancel" class="tool ghost">Cancelar</button>
+      <button id="btnUndo" class="tool icon" title="Desfazer (Ctrl+Z)" aria-label="Desfazer">↶</button>
+      <button id="btnRedo" class="tool icon" title="Refazer (Ctrl+Y)" aria-label="Refazer">↷</button>
+      <button id="btnReset" class="tool icon" title="Voltar ao desenho original" aria-label="Voltar ao desenho original" hidden>⟲</button>
       <button id="btnSave" class="tool primary">Salvar</button>
     </div>
   </section>
