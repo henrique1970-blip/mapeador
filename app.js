@@ -84,7 +84,7 @@
       return `${d}° ${nf(tm - d * 60, 4)}′ ${h}`;
     }
     const ts = Math.round(a * 3600 * 100) / 100, d = Math.floor(ts / 3600), mi = Math.floor((ts - d * 3600) / 60);
-    return `${d}° ${String(mi).padStart(2, '0')}′ ${nf(ts - d * 3600 - mi * 60, 2)}″ ${h}`;
+    return `${d}° ${String(mi).padStart(2, '0')}′ ${nf(ts - d * 3600 - mi * 60, 2).padStart(5, '0')}″ ${h}`;
   }
   function fmtLL(p) {
     if (S.coordFmt !== 'ddm' && S.coordFmt !== 'dms') return `${p[0].toFixed(6)}, ${p[1].toFixed(6)}`;
@@ -181,29 +181,43 @@
       return tile;
     },
     async _fill(c, tile) {
-      // desce no máximo 6 níveis (ampliação de 64×) atrás de imagem; "não sei" conta como "tem"
-      let z = Math.min(c.z, 19);
-      for (let k = 0; k < 6 && z > 1; k++) {
-        const s = 2 ** (c.z - z);
-        if ((await hasImagery(z, Math.floor(c.y / s), Math.floor(c.x / s))) !== false) break;
-        z--;
-      }
-      const s = 2 ** (c.z - z), ax = Math.floor(c.x / s), ay = Math.floor(c.y / s), w = 256 / s;
-      const img = await loadImg(ESRI_SAT.replace('{z}', z).replace('{y}', ay).replace('{x}', ax));
-      tile.getContext('2d').drawImage(img, (c.x - ax * s) * w, (c.y - ay * s) * w, w, w, 0, 0, 256, 256);
-      tile.dataset.z = z; // zoom de onde a imagem veio (usado nos testes)
+      const t = await satCrop(c.z, c.x, c.y);
+      tile.getContext('2d').drawImage(t.img, t.sx, t.sy, t.sw, t.sw, 0, 0, 256, 256);
+      tile.dataset.z = t.z; // zoom de onde a imagem veio (usado nos testes)
     }
   });
+  // recorte do bloco de satélite: desce no máximo 6 níveis (ampliação de 64×) atrás de imagem; "não sei" conta como "tem"
+  async function satCrop(cz, cx, cy) {
+    let z = Math.min(cz, 19);
+    for (let k = 0; k < 6 && z > 1; k++) {
+      const s = 2 ** (cz - z);
+      if ((await hasImagery(z, Math.floor(cy / s), Math.floor(cx / s))) !== false) break;
+      z--;
+    }
+    const s = 2 ** (cz - z), ax = Math.floor(cx / s), ay = Math.floor(cy / s), w = 256 / s;
+    const img = await loadImg(ESRI_SAT.replace('{z}', z).replace('{y}', ay).replace('{x}', ax));
+    return { img, sx: (cx - ax * s) * w, sy: (cy - ay * s) * w, sw: w, z };
+  }
+  // bloco de um modelo de URL comum, ampliando o ancestral acima do zoom nativo
+  const urlCrop = (tpl, maxNative, subs) => async (cz, cx, cy) => {
+    const z = Math.min(cz, maxNative), s = 2 ** (cz - z), ax = Math.floor(cx / s), ay = Math.floor(cy / s), w = 256 / s;
+    const url = tpl.replace('{s}', subs ? subs[(ax + ay) % subs.length] : '').replace('{z}', z).replace('{y}', ay).replace('{x}', ax);
+    return { img: await loadImg(url), sx: (cx - ax * s) * w, sy: (cy - ay * s) * w, sw: w };
+  };
   const sat = () => new EsriSat({ maxZoom: 21, attribution: esriAttr });
   // offline: só as camadas cujo provedor não proíbe download em lote (OSM e OpenTopoMap proíbem)
+  // img: camadas para a imagem exportada (JPG e PDF), com a atribuição que os provedores exigem
+  const OSM_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', OSM_ATTR = '© colaboradores do OpenStreetMap';
+  const TOPO_URL = 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', TOPO_ATTR = '© OpenStreetMap, SRTM · estilo © OpenTopoMap (CC-BY-SA)';
   const BASES = {
     hybrid: { label: 'Satélite com nomes', offline: [ESRI_SAT, ESRI_ROADS, ESRI_PLACES],
-      make: () => L.layerGroup([sat(), tl(ESRI_ROADS), tl(ESRI_PLACES)]) },
-    sat: { label: 'Satélite', offline: [ESRI_SAT], make: sat },
-    osm: { label: 'Ruas (OpenStreetMap)', make: () => tl('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      { attribution: '© colaboradores do OpenStreetMap' }) },
-    topo: { label: 'Topográfico (OpenTopoMap)', make: () => tl('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-      { maxNativeZoom: 17, subdomains: 'abc', attribution: '© OpenStreetMap, SRTM · estilo © OpenTopoMap (CC-BY-SA)' }) }
+      make: () => L.layerGroup([sat(), tl(ESRI_ROADS), tl(ESRI_PLACES)]),
+      img: () => [satCrop, urlCrop(ESRI_ROADS, 19), urlCrop(ESRI_PLACES, 19)], attr: esriAttr },
+    sat: { label: 'Satélite', offline: [ESRI_SAT], make: sat, img: () => [satCrop], attr: esriAttr },
+    osm: { label: 'Ruas (OpenStreetMap)', make: () => tl(OSM_URL, { attribution: OSM_ATTR }),
+      img: () => [urlCrop(OSM_URL, 19)], attr: OSM_ATTR },
+    topo: { label: 'Topográfico (OpenTopoMap)', make: () => tl(TOPO_URL, { maxNativeZoom: 17, subdomains: 'abc', attribution: TOPO_ATTR }),
+      img: () => [urlCrop(TOPO_URL, 17, 'abc')], attr: TOPO_ATTR }
   };
   let baseLayer = null;
   function setBase(key) {
@@ -809,6 +823,160 @@
   $('groupFilter').onchange = renderList;
 
   // ---------- Exportação / importação ----------
+  // ---------- Imagem do mapa e relatório PDF ----------
+  const RATIOS = {
+    '4:3': { label: '4:3 deitada', w: 4, h: 3 }, '3:4': { label: '3:4 em pé', w: 3, h: 4 }, '1:1': { label: 'Quadrada', w: 1, h: 1 },
+    '16:9': { label: '16:9 (tela larga)', w: 16, h: 9 }, '9:16': { label: '9:16 (status, stories)', w: 9, h: 16 },
+    a4l: { label: 'A4 deitada', w: Math.SQRT2, h: 1 }, a4p: { label: 'A4 em pé', w: 1, h: Math.SQRT2 }
+  };
+  const sizeLabel = m => m.type === 'area' ? fmtArea(measure(m).area_m2, S.areaUnit)
+    : m.type === 'distance' ? fmtLen(measure(m).length_m, S.lenUnit) : '';
+  async function mapImage(items, base, W, H, r, o) {
+    const b = BASES[base] || BASES.hybrid;
+    const res = await MapImg.render(Object.assign({ items, W, H, r, layers: b.img(), attribution: b.attr,
+      labelOf: m => [m.name, sizeLabel(m)], tileZoom: 19 }, o));
+    if (res.failed) toast(`${res.failed} de ${res.total} blocos do mapa não carregaram (sem internet?)`, 4000);
+    return res.canvas;
+  }
+  const jpegOf = (canvas, q) => new Promise((ok, fail) => canvas.toBlob(b => b ? ok(b) : fail(new Error('imagem')), 'image/jpeg', q || 0.88));
+
+  async function buildJPG(items, o) {
+    const ra = RATIOS[o.ratio] || RATIOS['4:3'], long = o.hi ? 2400 : 1200;
+    const W = Math.round(ra.w >= ra.h ? long : long * ra.w / ra.h), H = Math.round(ra.h > ra.w ? long : long * ra.h / ra.w);
+    toast('Gerando a imagem…', 20000);
+    const c = await mapImage(items, o.base, W, H, long / 800, { names: o.names, sizes: o.sizes, vertices: o.vertices, pad: 50 });
+    toast('Imagem pronta');
+    return jpegOf(c);
+  }
+
+  // latitude ou longitude sozinha, no formato escolhido
+  const fmtAxis = (v, lat) => S.coordFmt === 'ddm' || S.coordFmt === 'dms' ? (lat ? fmtDeg(v, 'N', 'S') : fmtDeg(v, 'L', 'O')) : v.toFixed(6);
+  function fmtAz(deg) {
+    const ts = Math.round(((deg % 360) + 360) % 360 * 3600), d = Math.floor(ts / 3600), mi = Math.floor(ts % 3600 / 60), se = ts % 60;
+    return `${d}°${String(mi).padStart(2, '0')}'${String(se).padStart(2, '0')}"`;
+  }
+  async function buildPDF(items, o, title) {
+    const doc = PDFDoc.create(), M = 40, CW = doc.W - 2 * M, BOTTOM = doc.H - 50;
+    const when = new Date().toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    const datumLbl = Proj.DATUMS[o.crs] ? Proj.DATUMS[o.crs].label : 'SIRGAS 2000';
+    let y = 0;
+    const page = () => {
+      doc.addPage();
+      doc.color([27, 94, 32]).rect(0, 0, doc.W, 6, true);
+      doc.font('bold', 9).color([27, 94, 32]).text('Mapeador de Áreas', M, 26).font('normal', 9).color([110, 110, 110]).text(`Relatório · ${when}`, doc.W - M, 26, 'right');
+      doc.color([200, 200, 200]).line(M, 33, doc.W - M, 33);
+      y = 56;
+    };
+    const need = h => { if (y + h > BOTTOM) page(); };
+    const para = (s, size, bold, rgb, gap) => {
+      doc.font(bold ? 'bold' : 'normal', size).color(rgb || [30, 30, 30]);
+      doc.wrap(s, CW).forEach(l => { need(size * 1.35); doc.text(l, M, y); y += size * 1.35; });
+      y += gap ?? 4;
+    };
+    const kv = (k, v) => {
+      doc.font('normal', 10);
+      const lines = doc.wrap(v, CW - 110);
+      need(lines.length * 14);
+      doc.font('bold', 10).color([90, 90, 90]).text(k, M, y);
+      doc.font('normal', 10).color([20, 20, 20]);
+      lines.forEach((l, i) => doc.text(l, M + 110, y + i * 14));
+      y += lines.length * 14 + 2;
+    };
+    // tabela com cabeçalho repetido a cada página; cols: [título, largura, alinhamento]
+    const table = (cols, rows, size) => {
+      const rh = size * 1.6;
+      const head = () => {
+        doc.color([235, 240, 235]).rect(M, y - size - 3, CW, rh, true);
+        doc.font('bold', size).color([40, 40, 40]);
+        let x = M + 4;
+        cols.forEach(([t, w, al]) => { doc.text(t, al === 'right' ? x + w - 8 : x, y, al); x += w; });
+        y += rh;
+      };
+      need(rh * 2); head();
+      rows.forEach((row, ri) => {
+        if (y + rh > BOTTOM) { page(); head(); }
+        if (row.total) doc.color([30, 30, 30]).line(M, y - size - 2, M + CW, y - size - 2);
+        else if (ri % 2) doc.color([248, 248, 248]).rect(M, y - size - 3, CW, rh, true);
+        doc.font(row.total ? 'bold' : 'normal', size).color([20, 20, 20]);
+        let x = M + 4;
+        row.forEach((v, i) => {
+          const [, w, al] = cols[i];
+          let s = String(v ?? '');
+          while (s.length > 1 && doc.width(s) > w - 8) s = s.slice(0, -2) + '…';
+          doc.text(s, al === 'right' ? x + w - 8 : x, y, al);
+          x += w;
+        });
+        y += rh;
+      });
+      y += 6;
+    };
+    const addMap = async (list, h, opts) => {
+      const r = 2.4, c = await mapImage(list, o.base, Math.round(CW * r), Math.round(h * r), r * 0.62, opts);
+      const jpg = new Uint8Array(await (await jpegOf(c, 0.85)).arrayBuffer());
+      need(h + 8);
+      doc.image(jpg, c.width, c.height, M, y, CW, h);
+      doc.color([180, 180, 180]).rect(M, y, CW, h);
+      y += h + 14;
+    };
+
+    page();
+    const total = items.filter(m => m.type === 'area').reduce((s, m) => s + measure(m).area_m2, 0);
+    if (o.pSum && items.length > 1) {
+      para(title === 'medicoes' ? 'Todas as medições' : title.replace(/_/g, ' '), 18, true, [20, 20, 20], 2);
+      para(`${items.length} medições · área total ${fmtArea(total, S.areaUnit)} (${otherAreas(total)})`, 10, false, [90, 90, 90], 10);
+      if (o.pMap) { toast('Gerando o mapa geral…', 30000); await addMap(items, 330, { names: true, sizes: false, pad: 30 }); }
+      table([['Nome', 160, 'left'], ['Grupo', 110, 'left'], ['Tipo', 60, 'left'], ['Área', 95, 'right'], ['Perímetro / compr.', 90, 'right']],
+        items.map(m => { const v = measure(m); return [m.name, m.group || '', TYPE_LABEL[m.type],
+          m.type === 'area' ? fmtArea(v.area_m2, S.areaUnit) : '', v.length_m != null ? fmtLen(v.length_m, S.lenUnit) : '']; })
+          .concat([Object.assign(['Total', '', '', fmtArea(total, S.areaUnit), ''], { total: true })]), 8.5);
+    }
+    for (let i = 0; i < items.length; i++) {
+      const m = items[i], v = measure(m);
+      if (i > 0 || (o.pSum && items.length > 1)) page();
+      toast(`Gerando o relatório: ${i + 1} de ${items.length}…`, 30000);
+      para(m.name, 18, true, [20, 20, 20], 2);
+      para([TYPE_LABEL[m.type], m.group].filter(Boolean).join(' · '), 10, false, [90, 90, 90], 8);
+      if (o.pMap) await addMap([m], m.type === 'poi' ? 260 : 340, { names: false, sizes: false, vertices: m.type !== 'poi', pad: 34 });
+      if (m.type === 'area') {
+        kv('Área', `${fmtArea(v.area_m2, S.areaUnit)}  (${otherAreas(v.area_m2)})`);
+        kv('Perímetro', fmtLen(v.length_m, S.lenUnit));
+        kv('Vértices', String(m.points.length));
+      } else if (m.type === 'distance') {
+        kv('Comprimento', fmtLen(v.length_m, S.lenUnit));
+        kv('Pontos', String(m.points.length));
+      } else {
+        kv('Coordenada', fmtLL(m.points[0]));
+        const u = Proj.toUTM(m.points[0], o.crs);
+        kv('UTM', `${u.zone}${u.hemisphere} ${datumLbl}  E ${nf(u.easting, 2)}  N ${nf(u.northing, 2)}`);
+      }
+      if (m.notes) kv('Observações', m.notes);
+      y += 8;
+      if (o.pCoord && m.type !== 'poi') {
+        // UTM no fuso do centro da medição; azimute plano (de quadrícula) e lado geodésico até o próximo vértice
+        const cc = L.latLngBounds(m.points).getCenter(), zn = Proj.zoneOf(cc.lng), so = cc.lat < 0;
+        const fwd = Proj.utm(o.crs, zn, so).fwd, xy = m.points.map(fwd);
+        para(`Vértices · UTM ${zn}${so ? 'S' : 'N'} ${datumLbl} · azimute plano, lado geodésico`, 10, true, [27, 94, 32], 6);
+        const n = m.points.length, closed = m.type === 'area';
+        table([['#', 26, 'left'], ['Latitude', 80, 'left'], ['Longitude', 80, 'left'], ['E (m)', 80, 'right'], ['N (m)', 86, 'right'],
+          ['Azimute', 82, 'left'], ['Lado (m)', 81, 'right']],
+        m.points.map((p, k) => {
+          const j = k + 1 < n ? k + 1 : closed ? 0 : -1;
+          const az = j < 0 ? '' : fmtAz(Math.atan2(xy[j][0] - xy[k][0], xy[j][1] - xy[k][1]) * 180 / Math.PI);
+          return [`P${k + 1}`, fmtAxis(p[0], true), fmtAxis(p[1], false), nf(xy[k][0], 2), nf(xy[k][1], 2), j < 0 ? '' : `${az} → P${j + 1}`,
+            j < 0 ? '' : nf(Geo.distance(p, m.points[j]), 2)];
+        }), 7.5);
+      }
+    }
+    doc.eachPage((i, n) => {
+      doc.color([200, 200, 200]).line(M, doc.H - 34, doc.W - M, doc.H - 34);
+      doc.font('normal', 7.5).color([120, 120, 120])
+        .text('Áreas e distâncias geodésicas (elipsoide WGS84 = SIRGAS 2000). A exatidão depende da imagem e do GPS usados.', M, doc.H - 22)
+        .text(`${i + 1} / ${n}`, doc.W - M, doc.H - 22, 'right');
+    });
+    toast('Relatório pronto');
+    return doc.build({ title });
+  }
+
   function exportDialog(items, baseName) {
     if (!items.length) return toast('Nada para exportar');
     const safe = (baseName || 'medicoes').replace(/[^\wÀ-ſ -]+/g, '').trim().replace(/\s+/g, '_') || 'medicoes';
@@ -820,13 +988,16 @@
       .concat(Object.entries(Proj.DATUMS).map(([k, d]) => [k, `UTM ${d.label}, fuso ${zoneTxt}`]))
       .map(([k, l]) => `<option value="${k}" ${k === (geo ? 'wgs84' : S.datum) ? 'selected' : ''}>${l}</option>`).join('');
     const FMTS = {
-      kml: 'KML (Google Earth, QGIS, GPS)', kmz: 'KMZ (KML compactado)', gpx: 'GPX (aparelhos GPS, Garmin)',
+      kml: 'KML (Google Earth, QGIS, GPS)', pdf: 'Relatório PDF (A4, com mapa e medidas)', jpg: 'Imagem JPG do mapa',
+      kmz: 'KMZ (KML compactado)', gpx: 'GPX (aparelhos GPS, Garmin)',
       shp: 'Shapefile .zip (QGIS, ArcGIS)', dxf: 'DXF (AutoCAD e outros CAD, em UTM)',
       geojson: 'GeoJSON (QGIS, SIG)', csv: 'CSV (Excel, com áreas e coordenadas)'
     };
     const utmConv = datum => Proj.utm(datum, zone, south).fwd;
-    const make = async fmt => {
-      const crs = $('fCrs').value;
+    const make = async (fmt, o) => {
+      const crs = o.crs;
+      if (fmt === 'pdf') return { name: safe + '.pdf', type: 'application/pdf', data: await buildPDF(items, o, safe) };
+      if (fmt === 'jpg') return { name: safe + '.jpg', type: 'image/jpeg', data: await buildJPG(items, o) };
       if (fmt === 'kml') return { name: safe + '.kml', type: 'application/vnd.google-earth.kml+xml', data: Formats.toKML(items, describe) };
       if (fmt === 'kmz') return { name: safe + '.kmz', type: 'application/vnd.google-earth.kmz',
         data: await Zip.write([{ name: 'doc.kml', data: Formats.toKML(items, describe) }], 'application/vnd.google-earth.kmz') };
@@ -846,20 +1017,42 @@
       <label for="fFmt">Formato</label>
       <select id="fFmt">${Object.entries(FMTS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
       <div id="fCrsBox" hidden><label for="fCrs">Sistema de coordenadas</label><select id="fCrs"></select></div>
+      <div id="fImgBox" hidden>
+        <div id="fJpgBox"><label for="fRatio">Proporção</label><select id="fRatio">${Object.entries(RATIOS).map(([k, r]) => `<option value="${k}">${r.label}</option>`).join('')}</select></div>
+        <label for="fMapT">Mapa</label><select id="fMapT">${Object.entries(BASES).map(([k, b]) => `<option value="${k}" ${k === S.layer ? 'selected' : ''}>${b.label}</option>`).join('')}</select>
+        <div id="fJpgChk">
+          <label class="layer-opt"><input type="checkbox" id="fNames" checked>Nomes</label>
+          <label class="layer-opt"><input type="checkbox" id="fSizes" checked>Área e distância</label>
+          <label class="layer-opt"><input type="checkbox" id="fVtx">Vértices</label>
+          <label class="layer-opt"><input type="checkbox" id="fHi" checked>Alta resolução</label>
+        </div>
+        <div id="fPdfChk">
+          <label class="layer-opt"><input type="checkbox" id="fPMap" checked>Mapa de cada medição</label>
+          <label class="layer-opt"><input type="checkbox" id="fPCoord" checked>Tabela de vértices (coordenadas, lados e azimutes)</label>
+          ${items.length > 1 ? '<label class="layer-opt"><input type="checkbox" id="fPSum" checked>Página de resumo com todas</label>' : ''}
+        </div>
+      </div>
       <p style="color:var(--muted);font-size:13px">${items.length} medição(ões)</p>`,
     [{ label: 'Baixar', cls: canShare ? '' : 'primary', onClick: () => run(download) }]
       .concat(canShare ? [{ label: 'Compartilhar', cls: 'primary', onClick: () => run(share) }] : []));
     // DXF é desenho em metros: só UTM. Os outros aceitam também graus.
     let lastGeo = null;
     const syncCrs = () => {
-      const f = $('fFmt').value, need = f === 'shp' || f === 'dxf' || f === 'csv', geo = f !== 'dxf';
+      const f = $('fFmt').value, need = f === 'shp' || f === 'dxf' || f === 'csv' || f === 'pdf', geo = f !== 'dxf' && f !== 'pdf';
       $('fCrsBox').hidden = !need;
+      $('fImgBox').hidden = f !== 'pdf' && f !== 'jpg';
+      $('fJpgBox').hidden = $('fJpgChk').hidden = f !== 'jpg';
+      $('fPdfChk').hidden = f !== 'pdf';
       if (need && geo !== lastGeo) { $('fCrs').innerHTML = crsOpts(geo); lastGeo = geo; }
     };
     $('fFmt').onchange = syncCrs;
     syncCrs();
+    // as opções são lidas na hora do toque: a geração é assíncrona e o modal já terá fechado
     function run(send) {
-      make($('fFmt').value).then(send, err => toast('Não foi possível exportar: ' + err.message, 4000));
+      const chk = id => !!($(id) && $(id).checked);
+      const o = { crs: $('fCrs').value, zone, south, ratio: $('fRatio').value, base: $('fMapT').value, names: chk('fNames'),
+        sizes: chk('fSizes'), vertices: chk('fVtx'), hi: chk('fHi'), pMap: chk('fPMap'), pCoord: chk('fPCoord'), pSum: chk('fPSum') };
+      make($('fFmt').value, o).then(send, err => toast('Não foi possível exportar: ' + err.message, 4000));
     }
   }
   function download(f) {

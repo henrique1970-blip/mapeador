@@ -195,6 +195,10 @@ Tocar numa medição da lista leva o mapa até ela.</p>
 </ol>
 <table>
   <tr><th>Formato</th><th>Para quê</th></tr>
+  <tr><td><b>Relatório PDF</b></td><td>Para entregar ao cliente, ao banco ou ao cartório: uma página por medição (folha A4) com o mapa,
+  a área em várias unidades, o perímetro, as observações e a tabela de vértices. A tabela traz latitude e longitude, UTM, o
+  azimute e o comprimento de cada lado. Com várias medições, a primeira página é um resumo com o mapa geral, a lista e a área total.</td></tr>
+  <tr><td><b>Imagem JPG</b></td><td>Foto do mapa com as medições, para mandar por WhatsApp ou pôr num documento.</td></tr>
   <tr><td><b>KML</b> / <b>KMZ</b></td><td>Google Earth, QGIS, aparelhos GPS. O KMZ é o mesmo KML compactado.</td></tr>
   <tr><td><b>GPX</b></td><td>Aparelhos GPS (Garmin e outros) e aplicativos de trilha. Áreas vão como trilha fechada; pontos, como waypoints.</td></tr>
   <tr><td><b>Shapefile</b> (.zip)</td><td>QGIS, ArcGIS e sistemas de órgãos públicos. O .zip traz um shapefile para áreas, um para linhas e um para pontos,
@@ -207,6 +211,14 @@ Tocar numa medição da lista leva o mapa até ela.</p>
 <b>SIRGAS 2000</b> (o oficial no Brasil desde 2015), <b>SAD69</b> ou <b>Córrego Alegre</b> (para conferir com mapas e
 memoriais antigos). O fuso UTM é o do centro das medições e vai no nome do arquivo DXF (por exemplo <span class="k">_UTM23S</span>).
 O arquivo leva o <span class="k">.prj</span>, então o QGIS reconhece o sistema sozinho.</p>
+<p><b>Opções do relatório PDF:</b> o datum do UTM da tabela, o tipo de mapa, e se entram o mapa de cada medição, a tabela
+de vértices e a página de resumo. O azimute é o <b>plano</b> (medido na quadrícula UTM, como nos memoriais descritivos);
+o comprimento de cada lado é o <b>geodésico</b>, o mesmo usado na área e no perímetro.</p>
+<p><b>Opções da imagem JPG:</b> proporção (deitada, em pé, quadrada, 16:9, 9:16 para status e stories, ou folha A4), tipo de
+mapa, e se aparecem os nomes, as medidas e os vértices. <b>Alta resolução</b> gera 2400 pixels no lado maior (sem ela, 1200).</p>
+<div class="note">O mapa do PDF e do JPG é montado com os mesmos blocos de imagem da tela. Sem internet, só sai o que já estava
+guardado no aparelho (áreas vistas antes ou baixadas em <span class="k">⬇ Mapa offline</span>); o resto fica cinza e o app avisa.
+Um relatório com muitas medições demora alguns segundos por mapa: espere a mensagem <b>Relatório pronto</b>.</div>
 <h3>Importar</h3>
 <ol class="steps">
   <li><span class="k">☰</span> › <span class="k">Importar arquivo</span> e escolha o arquivo: <b>KML, KMZ, GPX, GeoJSON</b> ou <b>Shapefile</b>.</li>
