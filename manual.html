@@ -108,7 +108,7 @@ usar sua localização. Toque em <b>Permitir</b>. Se recusou por engano, veja <a
 <table>
   <tr><th>Botão</th><th>Para que serve</th></tr>
   <tr><td><span class="k">☰</span> (alto, à esquerda)</td><td>Abre a lista das suas medições, a sincronização, a importação e a exportação.</td></tr>
-  <tr><td>Barra de busca</td><td>Procura uma cidade, um endereço ou uma coordenada, em graus decimais (<span class="k">-19.9, -43.95</span>) ou em graus, minutos e segundos (<span class="k">19°54'00"S 43°57'00"O</span>; aceita N/S e L/O ou E/W).</td></tr>
+  <tr><td>Barra de busca</td><td>Procura uma cidade, um endereço ou uma coordenada, em graus decimais (<span class="k">-19.9, -43.95</span>) em graus, minutos e segundos (<span class="k">19°54'00"S 43°57'00"O</span>; aceita N/S e L/O ou E/W) ou em UTM, com o fuso na frente (<span class="k">23S 297052 8190295</span>, no datum escolhido em <span class="k">◩</span>).</td></tr>
   <tr><td><span class="k">◩</span> (alto, à direita)</td><td>Tipo de mapa, unidades de medida, ajustes do GPS e download do mapa para usar sem internet.</td></tr>
   <tr><td><span class="k">◎</span></td><td>Mostra onde você está e faz o mapa seguir você. Se você arrastar o mapa, um toque volta a centralizar; tocar enquanto o mapa está seguindo desliga o GPS.</td></tr>
   <tr><td><span class="k">＋</span> (canto de baixo)</td><td>Começa uma medição nova: <b>Área</b>, <b>Distância</b> ou <b>Ponto</b>.</td></tr>
@@ -190,17 +190,35 @@ Tocar numa medição da lista leva o mapa até ela.</p>
 <h3>Exportar</h3>
 <ol class="steps">
   <li>Uma medição: toque nela e depois em <span class="k">⇪ Exportar</span>. Todas (ou um grupo): <span class="k">☰</span>, filtre o grupo se quiser, e <span class="k">Exportar tudo</span>.</li>
-  <li>Escolha o formato:
-    <b>KML</b> (Google Earth, QGIS, aparelhos GPS),
-    <b>GeoJSON</b> (programas de geoprocessamento) ou
-    <b>CSV</b> (Excel, com área, perímetro e coordenadas).</li>
+  <li>Escolha o formato (tabela abaixo). Para Shapefile, DXF e CSV, escolha também o <b>sistema de coordenadas</b>.</li>
   <li><span class="k">Compartilhar</span> envia por WhatsApp, e-mail ou Drive; <span class="k">Baixar</span> salva o arquivo no aparelho.</li>
 </ol>
+<table>
+  <tr><th>Formato</th><th>Para quê</th></tr>
+  <tr><td><b>KML</b> / <b>KMZ</b></td><td>Google Earth, QGIS, aparelhos GPS. O KMZ é o mesmo KML compactado.</td></tr>
+  <tr><td><b>GPX</b></td><td>Aparelhos GPS (Garmin e outros) e aplicativos de trilha. Áreas vão como trilha fechada; pontos, como waypoints.</td></tr>
+  <tr><td><b>Shapefile</b> (.zip)</td><td>QGIS, ArcGIS e sistemas de órgãos públicos. O .zip traz um shapefile para áreas, um para linhas e um para pontos,
+  com nome, grupo, área (ha e m²), perímetro, cor e observações na tabela de atributos.</td></tr>
+  <tr><td><b>DXF</b></td><td>AutoCAD e outros programas de CAD, em metros (UTM). Cada grupo vira uma camada; o nome e a medida de cada item vão como texto no desenho.</td></tr>
+  <tr><td><b>GeoJSON</b></td><td>Programas de geoprocessamento.</td></tr>
+  <tr><td><b>CSV</b></td><td>Excel: área, perímetro e as coordenadas de cada vértice, em graus ou em UTM.</td></tr>
+</table>
+<p><b>Sistema de coordenadas:</b> <b>graus</b> (WGS84, igual ao SIRGAS 2000 na prática) ou <b>UTM</b> em
+<b>SIRGAS 2000</b> (o oficial no Brasil desde 2015), <b>SAD69</b> ou <b>Córrego Alegre</b> (para conferir com mapas e
+memoriais antigos). O fuso UTM é o do centro das medições e vai no nome do arquivo DXF (por exemplo <span class="k">_UTM23S</span>).
+O arquivo leva o <span class="k">.prj</span>, então o QGIS reconhece o sistema sozinho.</p>
 <h3>Importar</h3>
 <ol class="steps">
-  <li><span class="k">☰</span> › <span class="k">Importar KML/GeoJSON</span> e escolha o arquivo.</li>
-  <li>As geometrias entram no grupo com o nome do arquivo. Arquivos <b>KMZ</b> precisam ser descompactados antes (dentro deles há um KML).</li>
+  <li><span class="k">☰</span> › <span class="k">Importar arquivo</span> e escolha o arquivo: <b>KML, KMZ, GPX, GeoJSON</b> ou <b>Shapefile</b>.</li>
+  <li>Shapefile: escolha o <span class="k">.zip</span> que o contém, ou selecione juntos os arquivos soltos
+  (<span class="k">.shp</span>, <span class="k">.dbf</span> e <span class="k">.prj</span>). O <span class="k">.prj</span> diz o sistema de coordenadas:
+  SIRGAS 2000, SAD69 e Córrego Alegre (em graus ou UTM) são convertidos sozinhos, com os parâmetros do IBGE. Sem o <span class="k">.prj</span>,
+  só é aceito arquivo em graus.</li>
+  <li>As geometrias entram no grupo com o nome do arquivo. O nome de cada item vem do campo <b>nome</b> (ou <b>name</b>) da tabela;
+  os outros campos vão para as observações.</li>
 </ol>
+<div class="note">Buracos de polígono (uma reserva dentro do talhão, por exemplo) ainda não são importados: o contorno de fora entra
+e o aplicativo avisa quantos buracos ficaram de fora. Arquivos <b>DXF</b> ainda não são importados, só exportados.</div>
 
 <h2 id="offline">9. Usar sem internet</h2>
 <p>Depois de aberto uma vez com internet, o Mapeador funciona sem sinal: medir, salvar, editar, usar o GPS e exportar.
@@ -224,7 +242,7 @@ download em lote; deles fica guardado só o que você já olhou.</div>
 os aparelhos (celular, tablet, computador), as medições se juntam e passam a aparecer em todos. Uma medição apagada
 em um aparelho some dos outros.</p>
 <div class="note"><b>Sincronizar não é a mesma coisa que exportar KML.</b> A sincronização leva as próprias medições de
-um aparelho para o outro, sozinha, sem gerar arquivo nenhum. O KML (e o GeoJSON e o CSV) da <a href="#exportar">seção 8</a>
+um aparelho para o outro, sozinha, sem gerar arquivo nenhum. Os arquivos da <a href="#exportar">seção 8</a> (KML, Shapefile, DXF e os outros)
 serve para levar os dados <b>para fora</b> do Mapeador: Google Earth, QGIS, um aparelho GPS, ou mandar para outra pessoa.
 Sem sincronização, também dá para passar medições de um aparelho para outro na mão: exporte o KML num e importe no outro.</div>
 
@@ -266,6 +284,8 @@ gist <b>secreto</b>: ele não aparece em buscas, mas quem tiver o endereço exat
   <li><b>Unidade de área:</b> hectares, metros quadrados, quilômetros quadrados, alqueire paulista (24.200 m²), alqueire mineiro/goiano (48.400 m²) ou acres. O painel sempre mostra também outras duas unidades.</li>
   <li><b>Unidade de distância:</b> metros, quilômetros, milhas ou pés.</li>
   <li><b>Coordenadas:</b> graus decimais, graus e minutos, ou graus, minutos e segundos. Vale para pontos e vértices; o UTM aparece sempre junto.</li>
+  <li><b>Datum do UTM:</b> SIRGAS 2000 (padrão), SAD69 ou Córrego Alegre. Muda o UTM mostrado no painel e o da busca. No SAD69 o mesmo
+  ponto fica cerca de 60 m deslocado em relação ao SIRGAS 2000; use-o só para conferir com mapas ou memoriais antigos.</li>
   <li><b>GPS:</b> de quantos em quantos metros marcar um ponto, qual a pior precisão aceita e a tolerância para simplificar trechos retos.</li>
   <li><b>Nomes das medições:</b> mostra ou esconde os rótulos no mapa.</li>
 </ul>

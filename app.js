@@ -31,7 +31,7 @@
 
   // ---------- Armazenamento ----------
   const defaults = { areaUnit: 'ha', lenUnit: 'm', layer: 'hybrid', labels: true, gpsMinDist: 5, gpsMaxAcc: 25,
-    gpsStraight: 1, coordFmt: 'dd', view: null };
+    gpsStraight: 1, coordFmt: 'dd', datum: 'sirgas', view: null };
   // deleted: marcas de exclusão {id, updated}, para a exclusão chegar aos outros aparelhos
   let store = { items: [], deleted: [], settings: Object.assign({}, defaults) };
   try {
@@ -103,9 +103,25 @@
     }
     return lat != null && lon != null && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? [lat, lon] : null;
   }
+  // UTM no datum escolhido; SIRGAS 2000 = WGS84 dentro de centímetros, então dispensa o proj4
+  function utmOf(p) {
+    return S.datum === 'sirgas' || !window.Proj ? Geo.toUTM(p[0], p[1]) : Proj.toUTM(p, S.datum);
+  }
   function utmText(p) {
-    const u = Geo.toUTM(p[0], p[1]);
-    return `UTM ${u.zone}${u.hemisphere}  E ${nf(u.easting, 1)}  N ${nf(u.northing, 1)}`;
+    const u = utmOf(p);
+    return `UTM ${u.zone}${u.hemisphere}${S.datum === 'sirgas' ? '' : ' ' + Proj.DATUMS[S.datum].label}  E ${nf(u.easting, 1)}  N ${nf(u.northing, 1)}`;
+  }
+  // "23S 345678 8190000" (fuso, E, N) → [lat, lon] no datum das configurações. Sem letra: hemisfério sul.
+  // A letra S é lida como sul (costume no Brasil), embora na grade UTM seja uma faixa do norte.
+  function parseUTM(q) {
+    const m = q.match(/^\s*(?:fuso\s*)?(\d{1,2})\s*([A-Za-z])?\s*[,;\s]\s*(?:E\s*[:=]?\s*)?(\d{5,8}(?:[.,]\d+)?)\s*(?:m\s*)?(?:E\b)?\s*[,;\s]\s*(?:N\s*[:=]?\s*)?(\d{5,8}(?:[.,]\d+)?)\s*(?:m\s*)?N?\s*$/i);
+    if (!m || !window.Proj) return null;
+    const zone = +m[1], L = (m[2] || 'S').toUpperCase();
+    const e = parseFloat(m[3].replace(',', '.')), n = parseFloat(m[4].replace(',', '.'));
+    if (zone < 1 || zone > 60 || e < 100000 || e > 900000 || n < 0 || n > 10000000) return null;
+    const south = L === 'S' || (L >= 'C' && L <= 'M');
+    const ll = Proj.fromUTM(zone, south, e, n, S.datum);
+    return isFinite(ll[0]) && isFinite(ll[1]) ? ll : null;
   }
 
   // ---------- Mapa ----------
@@ -797,24 +813,57 @@
     if (!items.length) return toast('Nada para exportar');
     const safe = (baseName || 'medicoes').replace(/[^\wÀ-ſ -]+/g, '').trim().replace(/\s+/g, '_') || 'medicoes';
     const canShare = !!(navigator.canShare && navigator.share);
-    const make = fmt => {
+    // fuso UTM do centro das medições (o costume quando a área cruza fusos)
+    const c = L.latLngBounds(items.flatMap(m => m.points)).getCenter(), zone = Proj.zoneOf(c.lng), south = c.lat < 0;
+    const zoneTxt = `${zone}${south ? 'S' : 'N'}`;
+    const crsOpts = geo => (geo ? [['wgs84', 'Graus (WGS84 / SIRGAS 2000)']] : [])
+      .concat(Object.entries(Proj.DATUMS).map(([k, d]) => [k, `UTM ${d.label}, fuso ${zoneTxt}`]))
+      .map(([k, l]) => `<option value="${k}" ${k === (geo ? 'wgs84' : S.datum) ? 'selected' : ''}>${l}</option>`).join('');
+    const FMTS = {
+      kml: 'KML (Google Earth, QGIS, GPS)', kmz: 'KMZ (KML compactado)', gpx: 'GPX (aparelhos GPS, Garmin)',
+      shp: 'Shapefile .zip (QGIS, ArcGIS)', dxf: 'DXF (AutoCAD e outros CAD, em UTM)',
+      geojson: 'GeoJSON (QGIS, SIG)', csv: 'CSV (Excel, com áreas e coordenadas)'
+    };
+    const utmConv = datum => Proj.utm(datum, zone, south).fwd;
+    const make = async fmt => {
+      const crs = $('fCrs').value;
       if (fmt === 'kml') return { name: safe + '.kml', type: 'application/vnd.google-earth.kml+xml', data: Formats.toKML(items, describe) };
+      if (fmt === 'kmz') return { name: safe + '.kmz', type: 'application/vnd.google-earth.kmz',
+        data: await Zip.write([{ name: 'doc.kml', data: Formats.toKML(items, describe) }], 'application/vnd.google-earth.kmz') };
+      if (fmt === 'gpx') return { name: safe + '.gpx', type: 'application/gpx+xml', data: Formats.toGPX(items, describe) };
       if (fmt === 'geojson') return { name: safe + '.geojson', type: 'application/geo+json', data: Formats.toGeoJSON(items, measure) };
-      return { name: safe + '.csv', type: 'text/csv', data: Formats.toCSV(items, measure) };
+      if (fmt === 'shp') {
+        const geo = crs === 'wgs84';
+        const files = Formats.toSHP(items, measure, geo ? p => [p[1], p[0]] : utmConv(crs),
+          geo ? Proj.geogWKT('sirgas') : Proj.utmWKT(crs, zone, south), safe);
+        return { name: safe + '_shp.zip', type: 'application/zip', data: await Zip.write(files) };
+      }
+      if (fmt === 'dxf') return { name: `${safe}_UTM${zoneTxt}.dxf`, type: 'application/dxf', data: Formats.toDXF(items, utmConv(crs), describe) };
+      const xy = crs === 'wgs84' ? null : { head: `utm_${zoneTxt}_${Proj.DATUMS[crs].label.replace(/\s+/g, '_')}_E_N`, f: utmConv(crs) };
+      return { name: safe + '.csv', type: 'text/csv', data: Formats.toCSV(items, measure, xy) };
     };
     modal('Exportar', `
       <label for="fFmt">Formato</label>
-      <select id="fFmt">
-        <option value="kml">KML (Google Earth, QGIS, GPS)</option>
-        <option value="geojson">GeoJSON (QGIS, SIG)</option>
-        <option value="csv">CSV (Excel, com áreas e coordenadas)</option>
-      </select>
+      <select id="fFmt">${Object.entries(FMTS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
+      <div id="fCrsBox" hidden><label for="fCrs">Sistema de coordenadas</label><select id="fCrs"></select></div>
       <p style="color:var(--muted);font-size:13px">${items.length} medição(ões)</p>`,
-    [{ label: 'Baixar', cls: canShare ? '' : 'primary', onClick: () => download(make($('fFmt').value)) }]
-      .concat(canShare ? [{ label: 'Compartilhar', cls: 'primary', onClick: () => share(make($('fFmt').value)) }] : []));
+    [{ label: 'Baixar', cls: canShare ? '' : 'primary', onClick: () => run(download) }]
+      .concat(canShare ? [{ label: 'Compartilhar', cls: 'primary', onClick: () => run(share) }] : []));
+    // DXF é desenho em metros: só UTM. Os outros aceitam também graus.
+    let lastGeo = null;
+    const syncCrs = () => {
+      const f = $('fFmt').value, need = f === 'shp' || f === 'dxf' || f === 'csv', geo = f !== 'dxf';
+      $('fCrsBox').hidden = !need;
+      if (need && geo !== lastGeo) { $('fCrs').innerHTML = crsOpts(geo); lastGeo = geo; }
+    };
+    $('fFmt').onchange = syncCrs;
+    syncCrs();
+    function run(send) {
+      make($('fFmt').value).then(send, err => toast('Não foi possível exportar: ' + err.message, 4000));
+    }
   }
   function download(f) {
-    const url = URL.createObjectURL(new Blob([f.data], { type: f.type }));
+    const url = URL.createObjectURL(f.data instanceof Blob ? f.data : new Blob([f.data], { type: f.type }));
     const a = document.createElement('a');
     a.href = url; a.download = f.name;
     document.body.appendChild(a); a.click(); a.remove();
@@ -834,27 +883,73 @@
     exportDialog(store.items.filter(m => !g || m.group === g), g || 'medicoes');
   };
   $('btnImport').onclick = () => $('fileInput').click();
+
+  // Lê os arquivos escolhidos (soltos ou dentro de .zip/.kmz) e devolve { sets: [{ group, items }], notes }
+  const extOf = n => ((n.match(/\.([^./\\]+)$/) || [])[1] || '').toLowerCase();
+  const stemOf = n => n.replace(/^.*[/\\]/, '').replace(/\.[^.]+$/, '');
+  async function readImport(files) {
+    const dec = new TextDecoder();
+    const entries = [];
+    for (const f of files) {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      const e = extOf(f.name);
+      if (e === 'zip' || e === 'kmz') {
+        const z = await Zip.read(bytes.buffer);
+        // no KMZ o KML de dentro (doc.kml) leva o nome do .kmz, que vira o grupo
+        Object.keys(z).filter(n => !/(^|\/)(__MACOSX|\.)/.test(n))
+          .forEach(n => entries.push({ name: e === 'kmz' && extOf(n) === 'kml' ? stemOf(f.name) + '.kml' : n, bytes: z[n] }));
+      } else entries.push({ name: f.name, bytes });
+    }
+    const sets = [], notes = [], shps = {};
+    for (const en of entries) {
+      const e = extOf(en.name);
+      if (['shp', 'dbf', 'prj', 'cpg'].includes(e)) {
+        const k = en.name.replace(/\.[^.]+$/, '').toLowerCase();
+        (shps[k] = shps[k] || { name: stemOf(en.name) })[e] = en.bytes;
+      } else if (['kml', 'gpx', 'geojson', 'json'].includes(e)) {
+        const text = dec.decode(en.bytes);
+        const items = e === 'kml' ? Formats.fromKML(text) : e === 'gpx' ? Formats.fromGPX(text) : Formats.fromGeoJSON(text);
+        sets.push({ group: stemOf(en.name), items });
+      }
+    }
+    const buf = u => u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength);
+    for (const sh of Object.values(shps)) {
+      if (!sh.shp) { notes.push(`${sh.name}: falta o arquivo .shp`); continue; }
+      let toLL = null;
+      if (sh.prj) toLL = Proj.fromPrj(dec.decode(sh.prj));
+      else {
+        // sem .prj só dá para aceitar coordenadas em graus
+        const h = new DataView(buf(sh.shp));
+        if ([36, 44, 52, 60].some(o => Math.abs(h.getFloat64(o, true)) > 180)) { notes.push(`${sh.name}: falta o arquivo .prj (sistema de coordenadas)`); continue; }
+      }
+      const items = Formats.fromSHP(buf(sh.shp), sh.dbf ? buf(sh.dbf) : null, toLL, sh.cpg ? dec.decode(sh.cpg) : '');
+      if (items.holes) notes.push(`${sh.name}: ${items.holes} buraco(s) de polígono ignorado(s)`);
+      sets.push({ group: sh.name, items });
+    }
+    return { sets, notes };
+  }
   $('fileInput').onchange = async e => {
-    const file = e.target.files[0];
+    const files = [...e.target.files];
     e.target.value = '';
-    if (!file) return;
+    if (!files.length) return;
     try {
-      const text = await file.text();
-      const isKml = /\.kml$/i.test(file.name) || /^\s*<\?xml|<kml/i.test(text);
-      const got = isKml ? Formats.fromKML(text) : Formats.fromGeoJSON(text);
-      const valid = got.filter(m => m.points.length >= ({ area: 3, distance: 2, poi: 1 }[m.type]));
-      if (!valid.length) return toast('Nenhuma geometria encontrada no arquivo');
+      const { sets, notes } = await readImport(files);
       const now = new Date().toISOString();
-      valid.forEach(m => {
+      const valid = [];
+      sets.forEach(({ group, items }) => items.forEach(m => {
+        if (m.points.length < { area: 3, distance: 2, poi: 1 }[m.type]) return;
+        if (!m.points.every(p => isFinite(p[0]) && isFinite(p[1]) && Math.abs(p[0]) <= 90 && Math.abs(p[1]) <= 180)) return;
         m.id = uid(); m.created = m.updated = now;
         m.color = m.color || TYPE_COLOR[m.type];
-        m.group = m.group || file.name.replace(/\.[^.]+$/, '');
-      });
+        m.group = m.group || group;
+        valid.push(m);
+      }));
+      if (!valid.length) return toast(['Nenhuma geometria encontrada no arquivo'].concat(notes).join('. '), 5000);
       store.items.push(...valid);
       persistItems(); renderSaved(); renderList();
       map.fitBounds(L.latLngBounds(valid.flatMap(m => m.points)), { padding: [40, 40], maxZoom: 18 });
       $('drawer').hidden = true;
-      toast(`${valid.length} medição(ões) importada(s)`);
+      toast([`${valid.length} medição(ões) importada(s)`].concat(notes).join('. '), notes.length ? 5000 : undefined);
     } catch (err) {
       toast('Não foi possível ler o arquivo: ' + err.message, 4000);
     }
@@ -868,7 +963,8 @@
       <label class="layer-opt"><input type="checkbox" id="fLabels" ${S.labels ? 'checked' : ''}>Mostrar nomes das medições</label>
       <div class="row2"><div><label for="fAU">Área</label><select id="fAU">${opt(AREA_UNITS, S.areaUnit)}</select></div>
       <div><label for="fLU">Distância</label><select id="fLU">${opt(LEN_UNITS, S.lenUnit)}</select></div></div>
-      <label for="fCF">Coordenadas</label><select id="fCF">${opt(COORD_FMTS, S.coordFmt)}</select>
+      <div class="row2"><div><label for="fCF">Coordenadas</label><select id="fCF">${opt(COORD_FMTS, S.coordFmt)}</select></div>
+      <div><label for="fDT">Datum do UTM</label><select id="fDT">${opt(Proj.DATUMS, S.datum)}</select></div></div>
       <div class="row2"><div><label for="fGD">GPS: marcar a cada (m)</label><input id="fGD" type="number" min="1" max="500" value="${S.gpsMinDist}"></div>
       <div><label for="fGA">GPS: precisão mínima (m)</label><input id="fGA" type="number" min="3" max="200" value="${S.gpsMaxAcc}"></div></div>
       <label for="fGS">GPS: simplificar trechos retos (m; 0 desliga)</label>
@@ -887,6 +983,7 @@
     const gs = parseFloat($('fGS').value);
     S.gpsStraight = isFinite(gs) ? Math.min(20, Math.max(0, gs)) : defaults.gpsStraight;
     S.coordFmt = COORD_FMTS[$('fCF').value] ? $('fCF').value : 'dd';
+    S.datum = Proj.DATUMS[$('fDT').value] ? $('fDT').value : 'sirgas';
     persist(); renderSaved(); renderList();
     if (cur) redraw(); else if (selectedId) selectItem(selectedId);
   }
@@ -1033,7 +1130,7 @@
       const a = parseFloat(m[1].replace(',', '.')), b = parseFloat(m[2].replace(',', '.'));
       if (Math.abs(a) <= 90 && Math.abs(b) <= 180) ll = [a, b];
     }
-    const dms = !ll && parseDMSPair(q);
+    const dms = !ll && (parseDMSPair(q) || parseUTM(q));
     if (dms) ll = dms;
     if (!ll) {
       try {
