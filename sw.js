@@ -1,5 +1,5 @@
 // Service worker: app funciona sem internet e guarda os blocos de mapa já vistos.
-const VERSION = 'v7';
+const VERSION = 'v8';
 const SHELL = `shell-${VERSION}`;
 const TILES = 'tiles-v2';        // blocos vistos durante o uso (podado)
 const OFFLINE = 'tiles-offline'; // blocos baixados de propósito (não podado)
