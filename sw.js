@@ -1,11 +1,11 @@
 // Service worker: app funciona sem internet e guarda os blocos de mapa já vistos.
-const VERSION = 'v6';
+const VERSION = 'v7';
 const SHELL = `shell-${VERSION}`;
 const TILES = 'tiles-v2';        // blocos vistos durante o uso (podado)
 const OFFLINE = 'tiles-offline'; // blocos baixados de propósito (não podado)
 const MAX_TILES = 3000;
 const ASSETS = [
-  './', 'index.html', 'manual.html', 'manual.pdf', 'style.css', 'app.js', 'geo.js', 'proj.js', 'zip.js', 'mapimg.js', 'pdfdoc.js', 'formats.js', 'offline.js', 'sync.js',
+  './', 'index.html', 'manual.html', 'manual.pdf', 'style.css', 'app.js', 'geo.js', 'proj.js', 'zip.js', 'mapimg.js', 'pdfdoc.js', 'photos.js', 'formats.js', 'offline.js', 'sync.js',
   'firebase-config.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',

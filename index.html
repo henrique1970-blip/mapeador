@@ -60,6 +60,7 @@
       <button class="icon-btn small" id="btnUnits" title="Unidades" aria-label="Unidades">⚙</button>
     </div>
     <div class="panel-hint" id="drawHint">Toque no mapa para marcar os vértices.</div>
+    <div class="ring-bar" id="ringBar" hidden></div>
     <div class="vertex-info" id="vertexInfo" hidden>
       <span id="vertexText"></span>
       <button id="btnDelVertex" class="tool mini danger" title="Apagar vértice selecionado">✕ Apagar</button>
@@ -69,6 +70,7 @@
       <button id="btnPause" class="tool" title="Pausar a gravação por GPS" hidden>⏸ Pausar</button>
       <button id="btnAddGps" class="tool" title="Marcar ponto na posição do GPS">📍 Aqui</button>
       <button id="btnAim" class="tool" title="Marcar pela mira no centro do mapa">⌖ Mira</button>
+      <button id="btnMore" class="tool icon" title="Mais: buraco, mover e girar, cortar" aria-label="Mais ferramentas">⋯</button>
     </div>
     <div class="tool-row">
       <button id="btnCancel" class="tool ghost">Cancelar</button>
@@ -94,6 +96,7 @@
     <div class="tool-row">
       <button class="tool" id="btnInfoEdit">✎ Editar</button>
       <button class="tool" id="btnInfoShare">⇪ Exportar</button>
+      <button class="tool" id="btnInfoPhotos" title="Fotos desta medição" style="flex:0 0 auto">📷</button>
       <button class="tool danger" id="btnInfoDelete">🗑 Excluir</button>
     </div>
   </section>
@@ -141,6 +144,7 @@
   <script src="zip.js"></script>
   <script src="mapimg.js"></script>
   <script src="pdfdoc.js"></script>
+  <script src="photos.js"></script>
   <script src="formats.js"></script>
   <script src="offline.js"></script>
   <script src="firebase-config.js"></script>

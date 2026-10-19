@@ -161,3 +161,20 @@ input, select, textarea { font: inherit; color: var(--fg); background: var(--bg)
 .leaflet-control-attribution { font-size: 10px; }
 .leaflet-top.leaflet-right { top: calc(var(--safe-top) + 116px); }
 .leaflet-bottom.leaflet-left { margin-bottom: var(--safe-bottom); }
+
+/* Grupo 4: anéis (contorno e buracos), alças de mover/girar, menu de ferramentas, fotos */
+.ring-bar { display: flex; gap: 6px; margin-top: 8px; overflow-x: auto; }
+.ring-bar[hidden] { display: none; }
+.chip { flex: 0 0 auto; height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid var(--line);
+  background: var(--chip); font-size: 13px; font-weight: 600; }
+.chip.on { background: var(--green); color: #fff; border-color: transparent; }
+.xf-h { display: flex; align-items: center; justify-content: center; width: 40px !important; height: 40px !important;
+  margin: -20px 0 0 -20px !important; border-radius: 50%; background: #fff; border: 3px solid #1b5e20; color: #1b5e20;
+  font-size: 22px; font-weight: 700; box-shadow: 0 2px 6px rgba(0,0,0,.45); }
+.more-act { display: block; width: 100%; height: auto; min-height: 48px; text-align: left; padding: 8px 12px; margin-bottom: 8px;
+  white-space: normal; }
+.more-act small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 4px 0 8px; }
+.photo-grid button { aspect-ratio: 1; padding: 0; border: 0; border-radius: 8px; overflow: hidden; background: var(--chip); }
+.photo-grid img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-view { width: 100%; max-height: 52vh; object-fit: contain; border-radius: 8px; background: #000; display: block; }

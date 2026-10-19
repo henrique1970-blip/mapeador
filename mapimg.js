@@ -60,11 +60,13 @@
     // medições
     ctx.lineJoin = ctx.lineCap = 'round';
     o.items.forEach(m => {
-      const q = m.points.map(px);
       if (m.type === 'poi') return;
+      // área: contorno e buracos no mesmo caminho, preenchido por par-ímpar (o buraco fica vazado)
+      const rings = [m.points].concat(m.type === 'area' && Array.isArray(m.holes) ? m.holes.filter(h => h.length >= 3) : []).map(r => r.map(px));
       ctx.beginPath();
-      q.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
-      if (m.type === 'area') { ctx.closePath(); ctx.fillStyle = hexRgb(m.color, 0.22); ctx.fill(); }
+      rings.forEach(q => { q.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); if (m.type === 'area') ctx.closePath(); });
+      if (m.type === 'area') { ctx.fillStyle = hexRgb(m.color, 0.22); ctx.fill('evenodd'); }
+      const q = rings.flat();
       ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 5 * r; ctx.stroke();
       ctx.strokeStyle = m.color || '#ffeb3b'; ctx.lineWidth = 2.6 * r; ctx.stroke();
       if (o.vertices) q.forEach(p => {

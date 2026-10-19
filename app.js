@@ -31,7 +31,7 @@
 
   // ---------- Armazenamento ----------
   const defaults = { areaUnit: 'ha', lenUnit: 'm', layer: 'hybrid', labels: true, gpsMinDist: 5, gpsMaxAcc: 25,
-    gpsStraight: 1, coordFmt: 'dd', datum: 'sirgas', view: null };
+    gpsStraight: 1, gpsOffset: 0, gpsOffSide: 'r', coordFmt: 'dd', datum: 'sirgas', view: null };
   // deleted: marcas de exclusão {id, updated}, para a exclusão chegar aos outros aparelhos
   let store = { items: [], deleted: [], settings: Object.assign({}, defaults) };
   try {
@@ -53,9 +53,12 @@
   function persistItems() { persist(); Sync.schedule(); }
   const S = store.settings;
 
+  // buracos válidos de uma área (anéis com 3+ vértices); a área desconta os buracos, o perímetro é só o do contorno
+  const holesOf = m => m.type === 'area' && Array.isArray(m.holes) ? m.holes.filter(h => h && h.length >= 3) : [];
+  const netArea = m => Math.max(0, Geo.area(m.points) - holesOf(m).reduce((t, h) => t + Geo.area(h), 0));
   function measure(m) {
     if (m.type === 'area') {
-      const a = Geo.area(m.points);
+      const a = netArea(m);
       return { area_m2: +a.toFixed(2), area_ha: +(a / 1e4).toFixed(6), length_m: +Geo.length(m.points, true).toFixed(2) };
     }
     if (m.type === 'distance') return { length_m: +Geo.length(m.points, false).toFixed(2) };
@@ -270,7 +273,7 @@
   function shapeFor(m, opts) {
     const c = m.color || TYPE_COLOR[m.type];
     const sel = opts && opts.selected;
-    if (m.type === 'area') return L.polygon(m.points, { color: c, weight: sel ? 5 : 3, fillOpacity: sel ? 0.35 : 0.22 });
+    if (m.type === 'area') return L.polygon([m.points].concat(holesOf(m)), { color: c, weight: sel ? 5 : 3, fillOpacity: sel ? 0.35 : 0.22 });
     if (m.type === 'distance') return L.polyline(m.points, { color: c, weight: sel ? 6 : 4 });
     return L.marker(m.points[0], { icon: L.divIcon({ className: 'poi-pin', html: `<div style="background:${c}"></div>` }) });
   }
@@ -303,7 +306,9 @@
     if (m.type === 'area') {
       const v = measure(m);
       $('infoValue').textContent = fmtArea(v.area_m2, S.areaUnit);
-      $('infoSub').textContent = `${otherAreas(v.area_m2)} · perímetro ${fmtLen(v.length_m, S.lenUnit)} · ${m.points.length} vértices`;
+      const nh = holesOf(m).length;
+      $('infoSub').textContent = `${otherAreas(v.area_m2)} · perímetro ${fmtLen(v.length_m, S.lenUnit)} · ${m.points.length} vértices` +
+        (nh ? ` · ${nh} buraco${nh > 1 ? 's' : ''} descontado${nh > 1 ? 's' : ''}` : '');
     } else if (m.type === 'distance') {
       $('infoValue').textContent = fmtLen(measure(m).length_m, S.lenUnit);
       $('infoSub').textContent = `${m.points.length} pontos`;
@@ -313,6 +318,8 @@
       $('infoSub').textContent = utmText(p);
     }
     $('infoNotes').textContent = m.notes || '';
+    $('btnInfoPhotos').textContent = '📷';
+    Photos.list(m.id).then(a => { if (selectedId === m.id && a.length) $('btnInfoPhotos').textContent = `📷 ${a.length}`; }).catch(() => {});
     showInfo(true);
     if (fit) fitItem(m);
   }
@@ -334,9 +341,68 @@
       store.items = store.items.filter(x => x.id !== m.id);
       store.deleted.push({ id: m.id, updated: new Date().toISOString() });
       persistItems(); selectedId = null; showInfo(false); renderSaved(); renderList();
+      Photos.delItem(m.id).catch(() => {});
       toast('Medição excluída');
     }, true);
   };
+  // ---------- Fotos ----------
+  // URLs de objeto da galeria aberta (liberadas ao trocar de tela)
+  let photoUrls = [];
+  const freeUrls = () => { photoUrls.forEach(u => URL.revokeObjectURL(u)); photoUrls = []; };
+  const objUrl = b => { const u = URL.createObjectURL(b); photoUrls.push(u); return u; };
+  async function openPhotos(id) {
+    const m = store.items.find(x => x.id === id);
+    if (!m) return;
+    let list = [];
+    try { list = await Photos.list(id); } catch (e) { return toast('Este navegador não deixa guardar fotos'); }
+    freeUrls();
+    modal(`Fotos · ${esc(m.name)}`, `
+      ${list.length ? `<div class="photo-grid">${list.map(r => `<button data-ph="${r.id}" aria-label="Abrir foto"><img src="${objUrl(r.thumb)}" alt=""></button>`).join('')}</div>`
+        : '<p style="color:var(--muted)">Nenhuma foto ainda.</p>'}
+      <p style="color:var(--muted);font-size:12px;margin:4px 0 0">As fotos ficam só neste aparelho. Elas vão junto no relatório PDF e no KMZ exportado (que leva as fotos para outro aparelho).</p>
+      <input type="file" id="photoInput" accept="image/*" multiple hidden>`,
+    [{ label: 'Fechar', cls: 'ghost', onClick: freeUrls }, { label: '＋ Adicionar foto', cls: 'primary', onClick: () => { $('photoInput').click(); return false; } }]);
+    $('modalBody').querySelectorAll('[data-ph]').forEach(b => b.onclick = () => openPhoto(id, b.dataset.ph));
+    $('photoInput').onchange = async e => {
+      const files = [...e.target.files];
+      if (!files.length) return;
+      toast(`Guardando ${files.length} foto(s)…`, 20000);
+      // posição da foto: o GPS, se estiver ligado e recente
+      const where = lastFix && Date.now() - lastFix.t < 60000 ? { lat: lastFix.ll[0], lng: lastFix.ll[1] } : {};
+      let ok = 0;
+      for (const f of files) { try { await Photos.add(id, f, where); ok++; } catch (err) { /* arquivo que não é imagem */ } }
+      toast(ok ? `${ok} foto(s) guardada(s)` : 'Não foi possível ler a imagem');
+      openPhotos(id);
+      if (selectedId === id) selectItem(id);
+    };
+  }
+  async function openPhoto(id, phId) {
+    const r = await Photos.get(phId);
+    if (!r) return openPhotos(id);
+    freeUrls();
+    const when = new Date(r.created).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    const canShare = !!(navigator.canShare && navigator.share);
+    const keep = () => Photos.update(phId, { caption: $('phCap').value.trim() });
+    modal('Foto', `
+      <img class="photo-view" src="${objUrl(r.blob)}" alt="">
+      <p style="color:var(--muted);font-size:12px;margin:6px 0 0">${when}${r.lat != null ? ' · ' + esc(fmtLL([r.lat, r.lng])) : ''}</p>
+      <label for="phCap">Legenda</label><input id="phCap" value="${esc(r.caption)}" placeholder="ex.: porteira norte">`,
+    [{ label: 'Apagar', cls: 'danger', onClick: () => {
+      confirmBox('Apagar foto', 'Apagar esta foto? Não dá para desfazer.', 'Apagar', async () => {
+        await Photos.del(phId); toast('Foto apagada'); openPhotos(id); if (selectedId === id) selectItem(id);
+      }, true);
+      return false;
+    } }]
+      .concat(canShare ? [{ label: 'Enviar', onClick: () => {
+        keep();
+        const file = new File([r.blob], `foto_${phId}.jpg`, { type: 'image/jpeg' });
+        navigator.share({ files: [file] }).catch(() => {});
+        return false;
+      } }] : [])
+      .concat([{ label: 'Voltar', cls: 'primary', onClick: () => { keep().then(() => openPhotos(id)); return false; } }]));
+  }
+  $('btnInfoPhotos').onclick = () => { if (selectedId) openPhotos(selectedId); };
+
   $('btnInfoEdit').onclick = () => {
     const m = store.items.find(x => x.id === selectedId);
     if (m) startDraw(m.type, m);
@@ -347,8 +413,11 @@
   };
 
   // ---------- Desenho / edição ----------
-  // { item, editingId, original, history, future, sel, mode, paused, aim, run, dirty }
+  // { item, editingId, original, history, future, sel, ring, mode, paused, aim, run, dirty, xf, cut, extra }
+  // ring: -1 = contorno, n = buraco n. xf: modo mover/girar. cut: modo cortar ({ pts }). extra: peças cortadas a salvar.
   let cur = null;
+  const ringPts = () => cur.ring >= 0 ? cur.item.holes[cur.ring] : cur.item.points;
+  const copyRing = r => r.map(p => p.slice());
 
   function startDraw(type, existing) {
     closeFabMenu();
@@ -357,13 +426,16 @@
     const item = existing
       ? JSON.parse(JSON.stringify(existing))
       : { id: uid(), type, name: '', group: '', color: TYPE_COLOR[type], notes: '', points: [] };
-    cur = { item, editingId: existing ? existing.id : null, original: existing ? item.points.map(p => p.slice()) : null,
-      history: [], future: [], sel: item.points.length - 1, mode: 'manual', paused: false, aim: false, run: null, dirty: false };
+    if (type === 'area') item.holes = Array.isArray(item.holes) ? item.holes : [];
+    cur = { item, editingId: existing ? existing.id : null, original: null,
+      history: [], future: [], sel: item.points.length - 1, ring: -1, mode: 'manual', paused: false, aim: false, run: null, dirty: false,
+      xf: null, cut: null, extra: [] };
+    if (existing) cur.original = stateNow();
     map.doubleClickZoom.disable();
     $('fabWrap').hidden = true;
     $('drawPanel').hidden = false;
     $('drawKind').textContent = (existing ? 'Editando · ' : 'Nova ') + TYPE_LABEL[type].toLowerCase();
-    $('btnMode').hidden = type === 'poi';
+    $('btnMode').hidden = $('btnMore').hidden = type === 'poi';
     $('btnReset').hidden = !existing;
     setMode('manual');
     setAim(false);
@@ -375,13 +447,15 @@
     if (cur && cur.mode === 'gps') stopGpsRecording();
     cur = null;
     $('aim').hidden = true;
+    $('ringBar').hidden = true;
     editLayer.clearLayers();
     map.doubleClickZoom.enable();
     $('drawPanel').hidden = true;
     $('fabWrap').hidden = false;
     renderSaved();
   }
-  const stateNow = () => ({ points: cur.item.points.map(p => p.slice()), sel: cur.sel });
+  const stateNow = () => ({ points: copyRing(cur.item.points), holes: (cur.item.holes || []).map(copyRing),
+    extra: cur.extra.map(e => ({ points: copyRing(e.points), holes: e.holes.map(copyRing) })), sel: cur.sel, ring: cur.ring });
   function snapshot() {
     cur.history.push(stateNow());
     if (cur.history.length > 200) cur.history.shift();
@@ -393,8 +467,9 @@
     const p = [latlng[0], latlng[1]];
     if (cur.item.type === 'poi') { cur.item.points = [p]; cur.sel = 0; }
     else {
-      const at = (cur.sel == null || cur.sel < 0) ? cur.item.points.length : cur.sel + 1;
-      cur.item.points.splice(at, 0, p);
+      const pts = ringPts();
+      const at = (cur.sel == null || cur.sel < 0) ? pts.length : cur.sel + 1;
+      pts.splice(at, 0, p);
       cur.sel = at;
     }
     redraw();
@@ -405,13 +480,33 @@
 
   function redraw() {
     editLayer.clearLayers();
-    const m = cur.item, pts = m.points, c = m.color || TYPE_COLOR[m.type];
-    let shape = null;
-    if (m.type === 'area' && pts.length >= 2) {
-      shape = (pts.length >= 3 ? L.polygon(pts, { color: c, weight: 3, fillOpacity: 0.25, interactive: false })
-        : L.polyline(pts, { color: c, weight: 3, interactive: false })).addTo(editLayer);
-    } else if (m.type === 'distance' && pts.length >= 2) {
-      shape = L.polyline(pts, { color: c, weight: 4, interactive: false }).addTo(editLayer);
+    renderRingBar();
+    const m = cur.item, pts = ringPts(), c = m.color || TYPE_COLOR[m.type];
+    let shape = null, holeLine = null;
+    // atualiza o desenho durante o arraste sem refazer as alças
+    const live = () => {
+      if (shape) shape.setLatLngs(m.type === 'area' && m.points.length >= 3 ? [m.points].concat(holesOf(m)) : m.points);
+      if (holeLine) holeLine.setLatLngs(pts);
+      updateDrawPanel();
+    };
+    if (m.type === 'area' && m.points.length >= 2) {
+      shape = (m.points.length >= 3 ? L.polygon([m.points].concat(holesOf(m)), { color: c, weight: 3, fillOpacity: 0.25, interactive: false })
+        : L.polyline(m.points, { color: c, weight: 3, interactive: false })).addTo(editLayer);
+    } else if (m.type === 'distance' && m.points.length >= 2) {
+      shape = L.polyline(m.points, { color: c, weight: 4, interactive: false }).addTo(editLayer);
+    }
+    // buraco em desenho (menos de 3 vértices ainda não entra no polígono) e anel ativo realçado
+    if (cur.ring >= 0) holeLine = L.polyline(pts.length >= 3 ? pts.concat([pts[0]]) : pts, { color: '#fff', weight: 2, dashArray: '6 5', interactive: false }).addTo(editLayer);
+    cur.extra.forEach((e, k) => {
+      L.polygon([e.points].concat(e.holes), { color: c, weight: 3, dashArray: '8 6', fillOpacity: 0.12, interactive: false })
+        .bindTooltip(`Peça ${k + 2}: ${fmtArea(netArea({ type: 'area', points: e.points, holes: e.holes }), S.areaUnit)}`, { permanent: true, direction: 'center', className: 'lbl' })
+        .addTo(editLayer);
+    });
+    if (cur.xf) { drawXf(); updateDrawPanel(); return; }
+    if (cur.cut) {
+      cur.cut.pts.forEach(q => L.circleMarker(q, { radius: 6, color: '#fff', weight: 2, fillColor: '#e53935', fillOpacity: 1, interactive: false }).addTo(editLayer));
+      updateDrawPanel();
+      return;
     }
     if (m.type === 'poi') {
       if (pts.length) {
@@ -436,7 +531,7 @@
       const insert = ll => { snapshot(); pts.splice(i + 1, 0, [ll.lat, ll.lng]); cur.sel = i + 1; inserted = true; };
       mk.on('click', e => { L.DomEvent.stop(e); insert(L.latLng(mid)); redraw(); });
       mk.on('dragstart', () => { insert(mk.getLatLng()); mk.unbindTooltip(); });
-      mk.on('drag', e => { if (inserted) { pts[i + 1] = [e.latlng.lat, e.latlng.lng]; if (shape) shape.setLatLngs(pts); updateDrawPanel(); } });
+      mk.on('drag', e => { if (inserted) { pts[i + 1] = [e.latlng.lat, e.latlng.lng]; live(); } });
       mk.on('dragend', redraw);
       mk.addTo(editLayer);
     }
@@ -444,7 +539,7 @@
       const mk = L.marker(p, { icon: vtxIcon(i === cur.sel, i === 0 && pts.length > 1), draggable: true, zIndexOffset: 100 });
       mk.on('click', e => { L.DomEvent.stop(e); cur.sel = i; redraw(); });
       mk.on('dragstart', () => { snapshot(); cur.sel = i; });
-      mk.on('drag', e => { pts[i] = [e.latlng.lat, e.latlng.lng]; if (shape) shape.setLatLngs(pts); updateDrawPanel(); });
+      mk.on('drag', e => { pts[i] = [e.latlng.lat, e.latlng.lng]; live(); });
       mk.on('dragend', redraw);
       mk.addTo(editLayer);
     });
@@ -452,13 +547,18 @@
   }
 
   function updateDrawPanel() {
-    const m = cur.item, pts = m.points;
+    const m = cur.item, pts = m.points, rp = m.type === 'poi' ? pts : ringPts();
     let val = '—', sub = '';
     if (m.type === 'area') {
-      const a = pts.length >= 3 ? Geo.area(pts) : 0;
+      const a = pts.length >= 3 ? netArea(m) : 0;
       const per = Geo.length(pts, pts.length >= 3);
-      if (pts.length >= 3) { val = fmtArea(a, S.areaUnit); sub = `${otherAreas(a)} · perímetro ${fmtLen(per, S.lenUnit)}`; }
-      else sub = pts.length ? `${pts.length} vértice(s) — faltam ${3 - pts.length}` : '';
+      const nh = holesOf(m).length;
+      if (pts.length >= 3) {
+        val = fmtArea(a, S.areaUnit);
+        sub = `${otherAreas(a)} · perímetro ${fmtLen(per, S.lenUnit)}` + (nh ? ` · ${nh} buraco${nh > 1 ? 's' : ''}` : '') +
+          (cur.extra.length ? ` · + ${cur.extra.length} peça${cur.extra.length > 1 ? 's' : ''}` : '');
+      } else sub = pts.length ? `${pts.length} vértice(s) — faltam ${3 - pts.length}` : '';
+      if (cur.ring >= 0 && rp.length < 3) sub = `Buraco ${cur.ring + 1}: ${rp.length} vértice(s) — faltam ${3 - rp.length}`;
     } else if (m.type === 'distance') {
       if (pts.length >= 2) { val = fmtLen(Geo.length(pts, false), S.lenUnit); sub = `${pts.length} pontos`; }
       else sub = pts.length ? 'Marque o próximo ponto' : '';
@@ -468,23 +568,35 @@
     }
     $('drawValue').textContent = val;
     $('drawSub').textContent = sub;
-    const sp = pts[cur.sel];
+    const sp = cur.xf || cur.cut ? null : rp[cur.sel];
     const vi = $('vertexInfo'), vt = $('vertexText');
-    if (cur.aim) {
-      const c = aimLatLng(), ref = m.type === 'poi' ? null : pts[cur.sel];
+    const vName = i => cur.ring >= 0 ? `vértice ${i + 1} do buraco ${cur.ring + 1}` : `vértice ${i + 1}`;
+    if (cur.xf) {
       vi.hidden = false;
-      vt.textContent = `Mira: ${fmtLL(c)}\n${utmText(c)}` + (ref ? ` · ${fmtLen(Geo.distance(ref, c), S.lenUnit)} do vértice ${cur.sel + 1}` : '');
+      vt.textContent = `Movido ${fmtLen(cur.xf.move, S.lenUnit)} · girado ${nf(cur.xf.turn, 1)}°`;
+    } else if (cur.aim) {
+      const c = aimLatLng(), ref = m.type === 'poi' || cur.cut ? null : rp[cur.sel];
+      vi.hidden = false;
+      vt.textContent = `Mira: ${fmtLL(c)}\n${utmText(c)}` + (ref ? ` · ${fmtLen(Geo.distance(ref, c), S.lenUnit)} do ${vName(cur.sel)}` : '');
     } else if (sp && m.type !== 'poi') {
       vi.hidden = false;
-      vt.textContent = `Vértice ${cur.sel + 1}: ${fmtLL(sp)}\n${utmText(sp)}`;
+      const nm = vName(cur.sel);
+      vt.textContent = `${nm[0].toUpperCase() + nm.slice(1)}: ${fmtLL(sp)}\n${utmText(sp)}`;
     } else vi.hidden = true;
     $('btnUndo').disabled = !cur.history.length;
     $('btnRedo').disabled = !cur.future.length;
     // com a mira ligada a linha mostra a mira, não o vértice: o apagar some para não confundir
     $('btnDelVertex').hidden = !sp || cur.aim || m.type === 'poi';
+    $('btnMore').textContent = cur.xf || cur.cut ? '✓' : '⋯';
+    $('btnMore').classList.toggle('on', !!(cur.xf || cur.cut));
     let hint;
-    if (cur.mode === 'gps' && cur.paused) hint = 'Gravação pausada. Ande sem marcar e toque em “▶ Continuar” no próximo trecho; “📍 Aqui” marca um ponto avulso.';
-    else if (cur.mode === 'gps') hint = `Caminhe pelo contorno. Um ponto é marcado a cada ${S.gpsMinDist} m, com precisão de até ${S.gpsMaxAcc} m.`;
+    if (cur.xf) hint = 'Arraste ✥ para mover e ⟳ para girar a medição inteira. Toque em ✓ quando terminar.';
+    else if (cur.cut) hint = cur.cut.pts.length ? 'Agora marque o outro ponto da linha de corte, do outro lado da área.' :
+      'Marque dois pontos, um de cada lado da área: a linha entre eles corta a área em duas. ✓ cancela.';
+    else if (cur.ring >= 0 && cur.mode !== 'gps') hint = `Desenhando o buraco ${cur.ring + 1}: toque nos cantos dele. Para voltar ao contorno, toque em “Contorno” acima.`;
+    else if (cur.mode === 'gps' && cur.paused) hint = 'Gravação pausada. Ande sem marcar e toque em “▶ Continuar” no próximo trecho; “📍 Aqui” marca um ponto avulso.';
+    else if (cur.mode === 'gps') hint = `Caminhe pelo ${cur.ring >= 0 ? 'contorno do buraco ' + (cur.ring + 1) : 'contorno'}. Um ponto é marcado a cada ${S.gpsMinDist} m, com precisão de até ${S.gpsMaxAcc} m.` +
+      (S.gpsOffset > 0 ? ` Deslocamento: ${nf(S.gpsOffset, 1)} m à ${S.gpsOffSide === 'l' ? 'esquerda' : 'direita'}.` : '');
     else if (cur.aim) hint = 'Arraste o mapa até a mira ficar sobre o ponto e toque no ＋ vermelho.';
     else if (m.type === 'poi') hint = 'Toque no mapa ou use “📍 Aqui” para marcar o ponto. Arraste para ajustar.';
     else hint = 'Toque no mapa para marcar. Arraste um vértice para ajustar; toque no ponto do meio de um lado para inserir.';
@@ -493,9 +605,162 @@
   }
 
   map.on('click', e => {
-    if (!cur || cur.aim || (cur.mode === 'gps' && !cur.paused)) return;
+    if (!cur || cur.aim || cur.xf || (cur.mode === 'gps' && !cur.paused)) return;
+    if (cur.cut) return addCutPoint([e.latlng.lat, e.latlng.lng]);
     addPoint([e.latlng.lat, e.latlng.lng]);
   });
+
+  // ---------- Buracos, mover/girar e cortar ----------
+  function renderRingBar() {
+    const bar = $('ringBar'), m = cur.item;
+    const show = m.type === 'area' && m.holes.length > 0 && !cur.xf && !cur.cut;
+    bar.hidden = !show;
+    if (!show) return;
+    bar.innerHTML = ['Contorno'].concat(m.holes.map((_, i) => `Buraco ${i + 1}`))
+      .map((t, i) => `<button class="chip${i - 1 === cur.ring ? ' on' : ''}" data-ring="${i - 1}">${t}</button>`).join('');
+  }
+  $('ringBar').addEventListener('click', e => {
+    const b = e.target.closest('button[data-ring]');
+    if (!b || !cur) return;
+    dropEmptyHole();
+    cur.ring = Math.min(+b.dataset.ring, cur.item.holes.length - 1);
+    cur.sel = ringPts().length - 1;
+    redraw();
+  });
+  // buraco começado e abandonado (menos de 3 vértices) some ao trocar de anel
+  function dropEmptyHole() {
+    const h = cur.ring >= 0 && cur.item.holes[cur.ring];
+    if (h && h.length < 3) { cur.item.holes.splice(cur.ring, 1); cur.ring = -1; }
+  }
+  // plano UTM em torno da medição (SIRGAS 2000, fuso do centro): mover, girar e cortar trabalham em metros
+  function planeOf(pts) {
+    const c = L.latLngBounds(pts).getCenter();
+    return Proj.utm('sirgas', Proj.zoneOf(c.lng), c.lat < 0);
+  }
+  function startXf() {
+    if (cur.mode === 'gps') return toast('Desligue o GPS (🚶 GPS) antes de mover');
+    setAim(false);
+    dropEmptyHole();
+    cur.xf = { move: 0, turn: 0 };
+    redraw();
+  }
+  // alças: ✥ no centro (mover) e ⟳ acima dele (girar). Cada arraste parte do desenho atual, sem acumular erro.
+  function drawXf() {
+    const m = cur.item, P = planeOf(m.points);
+    const rings = () => [m.points].concat(m.holes || []);
+    const xy = m.points.map(P.fwd);
+    const bx = xy.map(q => q[0]), by = xy.map(q => q[1]);
+    const c0 = [(Math.min(...bx) + Math.max(...bx)) / 2, (Math.min(...by) + Math.max(...by)) / 2];
+    const H = Math.max(15, 0.6 * Math.max(Math.max(...bx) - Math.min(...bx), Math.max(...by) - Math.min(...by)));
+    const shape = editLayer.getLayers()[0];
+    let base = null, a0 = 0;
+    const begin = () => { snapshot(); base = rings().map(r => r.map(P.fwd)); };
+    const apply = (dx, dy, ang) => {
+      const cs = Math.cos(ang), sn = Math.sin(ang);
+      const out = base.map(r => r.map(([x, y]) => {
+        const u = x - c0[0], v = y - c0[1];
+        return P.inv([c0[0] + u * cs + v * sn + dx, c0[1] - u * sn + v * cs + dy]);
+      }));
+      m.points.splice(0, m.points.length, ...out[0]);
+      if (m.holes) out.slice(1).forEach((r, k) => m.holes[k].splice(0, m.holes[k].length, ...r));
+      if (shape) shape.setLatLngs(m.type === 'area' ? [m.points].concat(holesOf(m)) : m.points);
+    };
+    const mover = L.marker(P.inv(c0), { draggable: true, zIndexOffset: 200, icon: L.divIcon({ className: 'xf-h', html: '✥', iconSize: [40, 40] }) });
+    let last = 0;
+    mover.on('dragstart', begin);
+    mover.on('drag', e => {
+      const q = P.fwd([e.latlng.lat, e.latlng.lng]);
+      apply(q[0] - c0[0], q[1] - c0[1], 0);
+      last = Math.hypot(q[0] - c0[0], q[1] - c0[1]);
+      $('vertexText').textContent = `Movido ${fmtLen(cur.xf.move + last, S.lenUnit)} · girado ${nf(cur.xf.turn, 1)}°`;
+    });
+    mover.on('dragend', () => { cur.xf.move += last; last = 0; redraw(); });
+    const rot = L.marker(P.inv([c0[0], c0[1] + H]), { draggable: true, zIndexOffset: 200, icon: L.divIcon({ className: 'xf-h', html: '⟳', iconSize: [40, 40] }) });
+    let ang = 0;
+    rot.on('dragstart', () => { begin(); a0 = 0; });
+    rot.on('drag', e => {
+      const q = P.fwd([e.latlng.lat, e.latlng.lng]);
+      ang = Math.atan2(q[0] - c0[0], q[1] - c0[1]); // a partir do norte, sentido horário
+      apply(0, 0, ang - a0);
+      $('vertexText').textContent = `Movido ${fmtLen(cur.xf.move, S.lenUnit)} · girado ${nf(cur.xf.turn + ang * 180 / Math.PI, 1)}°`;
+    });
+    rot.on('dragend', () => { cur.xf.turn = (cur.xf.turn + ang * 180 / Math.PI + 540) % 360 - 180; ang = 0; redraw(); });
+    L.polyline([P.inv(c0), P.inv([c0[0], c0[1] + H])], { color: '#fff', weight: 2, dashArray: '4 4', interactive: false }).addTo(editLayer);
+    mover.addTo(editLayer); rot.addTo(editLayer);
+  }
+  function startCut() {
+    if (cur.mode === 'gps') return toast('Desligue o GPS (🚶 GPS) antes de cortar');
+    dropEmptyHole();
+    cur.ring = -1;
+    cur.cut = { pts: [] };
+    redraw();
+  }
+  function addCutPoint(ll) {
+    cur.cut.pts.push(ll);
+    if (cur.cut.pts.length < 2) return redraw();
+    const err = cutArea(cur.cut.pts[0], cur.cut.pts[1]);
+    cur.cut = null;
+    if (err) toast(err, 4000);
+    redraw();
+  }
+  // corta o contorno pela reta entre a e b (que precisa cruzar a borda exatamente duas vezes).
+  // A peça maior fica nesta medição; a outra é salva como medição nova. Buracos vão para a peça que os contém.
+  function cutArea(a, b) {
+    const m = cur.item, P = planeOf(m.points), A = P.fwd(a), B = P.fwd(b), xy = m.points.map(P.fwd);
+    const hit = (p, q) => {
+      const d = (B[0] - A[0]) * (q[1] - p[1]) - (B[1] - A[1]) * (q[0] - p[0]);
+      if (Math.abs(d) < 1e-12) return null;
+      const t = ((p[0] - A[0]) * (q[1] - p[1]) - (p[1] - A[1]) * (q[0] - p[0])) / d;
+      const u = ((p[0] - A[0]) * (B[1] - A[1]) - (p[1] - A[1]) * (B[0] - A[0])) / d;
+      return t >= 0 && t <= 1 && u >= 0 && u < 1 ? { t, u, pt: [A[0] + t * (B[0] - A[0]), A[1] + t * (B[1] - A[1])] } : null;
+    };
+    const hits = [];
+    xy.forEach((p, i) => { const h = hit(p, xy[(i + 1) % xy.length]); if (h) hits.push(Object.assign(h, { i })); });
+    if (hits.length !== 2) return hits.length < 2
+      ? 'A linha de corte precisa atravessar a área: marque um ponto de cada lado, fora dela.'
+      : 'A linha cruza a borda mais de duas vezes. Corte em partes, uma de cada vez.';
+    const hs = m.holes.filter(h => h.length >= 3);
+    if (hs.some(h => { const q = h.map(P.fwd); return q.some((p, i) => hit(p, q[(i + 1) % q.length])); })) return 'A linha de corte passa por um buraco. Mude a linha.';
+    const [h1, h2] = hits.sort((x, y) => x.i - y.i || x.u - y.u);
+    const i1 = P.inv(h1.pt), i2 = P.inv(h2.pt);
+    const r1 = [i1].concat(m.points.slice(h1.i + 1, h2.i + 1), [i2]);
+    const r2 = [i2].concat(m.points.slice(h2.i + 1), m.points.slice(0, h1.i + 1), [i1]);
+    const piece = r => ({ points: r, holes: hs.filter(h => Formats.pointInRing(h[0], r)) });
+    let [big, small] = [piece(r1), piece(r2)];
+    if (netArea(Object.assign({ type: 'area' }, small)) > netArea(Object.assign({ type: 'area' }, big))) [big, small] = [small, big];
+    snapshot();
+    m.points = big.points; m.holes = big.holes.map(copyRing);
+    cur.extra.push({ points: small.points, holes: small.holes.map(copyRing) });
+    cur.sel = m.points.length - 1;
+    toast(`Cortada em duas: ${fmtArea(netArea(m), S.areaUnit)} e ${fmtArea(netArea(Object.assign({ type: 'area' }, small)), S.areaUnit)}. As peças viram medições separadas ao salvar.`, 5000);
+    return null;
+  }
+  $('btnMore').onclick = () => {
+    if (!cur) return;
+    if (cur.xf || cur.cut) { cur.xf = null; cur.cut = null; redraw(); return; }
+    const m = cur.item, acts = [];
+    if (m.type === 'area') acts.push(['hole', '◌ Desenhar um buraco', 'Represa, reserva, construção: a área dele é descontada.']);
+    if (m.type === 'area' && cur.ring >= 0) acts.push(['delhole', `✕ Apagar o buraco ${cur.ring + 1}`, '']);
+    if (m.points.length >= 2) acts.push(['xf', '✥ Mover e girar', 'Arrasta ou gira a medição inteira, sem mudar o formato.']);
+    if (m.type === 'area' && m.points.length >= 3) acts.push(['cut', '✂ Cortar em duas', 'Divide a área por uma linha; cada parte vira uma medição.']);
+    if (!acts.length) return toast('Marque a medição primeiro');
+    modal('Mais ferramentas', acts.map(([k, t, d]) => `<button class="tool more-act" data-act="${k}">${t}${d ? `<small>${d}</small>` : ''}</button>`).join(''),
+      [{ label: 'Fechar', cls: 'ghost' }]);
+    $('modalBody').querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
+      closeModal();
+      const k = b.dataset.act;
+      if (k === 'hole') {
+        if (cur.mode === 'gps' && !cur.paused) toast('O GPS agora grava o contorno do buraco');
+        dropEmptyHole();
+        snapshot();
+        m.holes.push([]); cur.ring = m.holes.length - 1; cur.sel = -1;
+        redraw();
+      } else if (k === 'delhole') {
+        snapshot(); m.holes.splice(cur.ring, 1); cur.ring = -1; cur.sel = m.points.length - 1; redraw();
+      } else if (k === 'xf') startXf();
+      else if (k === 'cut') startCut();
+    });
+  };
 
   // ---------- Mira ----------
   // centro da parte do mapa que fica entre a barra de busca e o painel
@@ -520,13 +785,21 @@
   $('btnAim').onclick = () => setAim(!cur.aim);
   $('btnAimAdd').onclick = e => {
     L.DomEvent.stop(e);
-    if (cur) addPoint(aimLatLng());
+    if (cur && cur.cut) addCutPoint(aimLatLng());
+    else if (cur) addPoint(aimLatLng());
   };
   map.on('move', () => { if (cur && cur.aim) updateDrawPanel(); });
   window.addEventListener('resize', () => { if (cur && cur.aim) placeAim(); });
 
   // ---------- Desfazer / refazer ----------
-  function restore(h) { cur.item.points = h.points; cur.sel = h.sel; redraw(); }
+  function restore(h) {
+    cur.item.points = h.points;
+    if (cur.item.type === 'area') cur.item.holes = h.holes;
+    cur.extra = h.extra;
+    cur.ring = Math.min(h.ring, (cur.item.holes || []).length - 1);
+    cur.sel = h.sel;
+    redraw();
+  }
   function undo() {
     if (!cur || !cur.history.length) return;
     cur.future.push(stateNow());
@@ -541,16 +814,14 @@
     if (!cur || !cur.original) return;
     confirmBox('Voltar ao original', 'Descartar todas as alterações e voltar ao desenho salvo? Se mudar de ideia, toque em ↶.', 'Voltar', () => {
       snapshot();
-      cur.item.points = cur.original.map(p => p.slice());
-      cur.sel = cur.item.points.length - 1;
-      redraw();
+      restore(JSON.parse(JSON.stringify(Object.assign({}, cur.original, { extra: [], ring: -1, sel: cur.original.points.length - 1 }))));
     });
   }
   function deleteVertex() {
-    if (!cur || cur.item.points[cur.sel] == null) return;
+    if (!cur || cur.xf || cur.cut || cur.item.type === 'poi' || ringPts()[cur.sel] == null) return;
     snapshot();
-    cur.item.points.splice(cur.sel, 1);
-    cur.sel = Math.min(cur.sel, cur.item.points.length - 1);
+    ringPts().splice(cur.sel, 1);
+    cur.sel = Math.min(cur.sel, ringPts().length - 1);
     redraw();
   }
   $('btnUndo').onclick = undo;
@@ -573,6 +844,8 @@
   $('btnSave').onclick = () => {
     const m = cur.item, need = { area: 3, distance: 2, poi: 1 }[m.type];
     if (m.points.length < need) return toast(`Marque pelo menos ${need} ponto(s).`);
+    if (cur.xf || cur.cut) { cur.xf = null; cur.cut = null; redraw(); }
+    if (m.type === 'area' && m.holes.some(h => h.length && h.length < 3)) toast('Buraco com menos de 3 cantos não é salvo');
     const groups = [...new Set(store.items.map(x => x.group).filter(Boolean))];
     const count = store.items.filter(x => x.type === m.type).length + 1;
     modal('Salvar medição', `
@@ -590,15 +863,20 @@
         m.notes = $('fNotes').value.trim();
         const now = new Date().toISOString();
         m.updated = now;
+        if (m.type === 'area') m.holes = m.holes.filter(h => h.length >= 3);
         // a original pode ter sido excluída em outro aparelho durante a edição: aí entra como nova
         if (cur.editingId && store.items.some(x => x.id === cur.editingId)) store.items = store.items.map(x => x.id === cur.editingId ? m : x);
         else { m.created = now; store.items.push(m); }
+        // peças de um corte: medições novas com o mesmo grupo, cor e observações
+        cur.extra.forEach((e, k) => store.items.push({ id: uid(), type: 'area', name: `${m.name} (${k + 2})`, group: m.group, color: m.color,
+          notes: m.notes, points: e.points, holes: e.holes, created: now, updated: now }));
+        const n = 1 + cur.extra.length;
         persistItems();
         const id = m.id;
         endDraw();
         renderList();
         selectItem(id);
-        toast('Medição salva');
+        toast(n > 1 ? `${n} medições salvas` : 'Medição salva');
       }
     }]);
     $('fColors').addEventListener('click', e => {
@@ -702,9 +980,32 @@
     const t = L2 ? Math.max(0, Math.min(1, (P[0] * B[0] + P[1] * B[1]) / L2)) : 0;
     return Math.hypot(P[0] - t * B[0], P[1] - t * B[1]);
   }
+  // ponto a d metros de p no rumo az (graus), na esfera
+  function destPoint(p, az, d) {
+    const R = 6371008.8, r = Math.PI / 180, f1 = p[0] * r, l1 = p[1] * r, a = az * r, dd = d / R;
+    const f2 = Math.asin(Math.sin(f1) * Math.cos(dd) + Math.cos(f1) * Math.sin(dd) * Math.cos(a));
+    const l2 = l1 + Math.atan2(Math.sin(a) * Math.sin(dd) * Math.cos(f1), Math.cos(dd) - Math.sin(f1) * Math.sin(f2));
+    return [f2 / r, l2 / r];
+  }
+  function bearing(a, b) {
+    const r = Math.PI / 180, f1 = a[0] * r, f2 = b[0] * r, dl = (b[1] - a[1]) * r;
+    return Math.atan2(Math.sin(dl) * Math.cos(f2), Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl)) / r;
+  }
+  // Deslocamento lateral: a antena está a gpsOffset m do que se quer marcar (borda do implemento, a cerca ao lado).
+  // O rumo vem do caminho andado (pelo menos 2 m); até lá a posição fica guardada e não marca nada.
+  function lateral(f) {
+    if (!(S.gpsOffset > 0) || !cur.run) return f;
+    const run = cur.run;
+    if (!run.raw) { run.raw = f.ll; return null; }
+    if (Geo.distance(run.raw, f.ll) >= 2) { run.head = bearing(run.raw, f.ll); run.raw = f.ll; }
+    if (run.head == null) return null;
+    return Object.assign({}, f, { ll: destPoint(f.ll, run.head + (S.gpsOffSide === 'l' ? -90 : 90), S.gpsOffset) });
+  }
   function gpsRecord(f) {
     if (cur.paused || f.acc > S.gpsMaxAcc || !jumpOk(f)) return;
-    const pts = cur.item.points;
+    f = lateral(f);
+    if (!f) return;
+    const pts = ringPts();
     const last = pts[pts.length - 1];
     if (last && Geo.distance(last, f.ll) < S.gpsMinDist) return;
     // Trecho reto: se o último ponto gravado (e os que ele já substituiu) cabem a menos de gpsStraight m
@@ -941,6 +1242,8 @@
         kv('Área', `${fmtArea(v.area_m2, S.areaUnit)}  (${otherAreas(v.area_m2)})`);
         kv('Perímetro', fmtLen(v.length_m, S.lenUnit));
         kv('Vértices', String(m.points.length));
+        const hs = holesOf(m);
+        if (hs.length) kv('Buracos', `${hs.length}, somando ${fmtArea(hs.reduce((t, h) => t + Geo.area(h), 0), S.areaUnit)} (já descontados da área)`);
       } else if (m.type === 'distance') {
         kv('Comprimento', fmtLen(v.length_m, S.lenUnit));
         kv('Pontos', String(m.points.length));
@@ -954,17 +1257,51 @@
       if (o.pCoord && m.type !== 'poi') {
         // UTM no fuso do centro da medição; azimute plano (de quadrícula) e lado geodésico até o próximo vértice
         const cc = L.latLngBounds(m.points).getCenter(), zn = Proj.zoneOf(cc.lng), so = cc.lat < 0;
-        const fwd = Proj.utm(o.crs, zn, so).fwd, xy = m.points.map(fwd);
+        const fwd = Proj.utm(o.crs, zn, so).fwd;
         para(`Vértices · UTM ${zn}${so ? 'S' : 'N'} ${datumLbl} · azimute plano, lado geodésico`, 10, true, [27, 94, 32], 6);
-        const n = m.points.length, closed = m.type === 'area';
-        table([['#', 26, 'left'], ['Latitude', 80, 'left'], ['Longitude', 80, 'left'], ['E (m)', 80, 'right'], ['N (m)', 86, 'right'],
-          ['Azimute', 82, 'left'], ['Lado (m)', 81, 'right']],
-        m.points.map((p, k) => {
-          const j = k + 1 < n ? k + 1 : closed ? 0 : -1;
-          const az = j < 0 ? '' : fmtAz(Math.atan2(xy[j][0] - xy[k][0], xy[j][1] - xy[k][1]) * 180 / Math.PI);
-          return [`P${k + 1}`, fmtAxis(p[0], true), fmtAxis(p[1], false), nf(xy[k][0], 2), nf(xy[k][1], 2), j < 0 ? '' : `${az} → P${j + 1}`,
-            j < 0 ? '' : nf(Geo.distance(p, m.points[j]), 2)];
-        }), 7.5);
+        // pre: prefixo do nome do vértice (P no contorno, B1-P no buraco 1)
+        const vtable = (ring, closed, pre) => {
+          const xy = ring.map(fwd), n = ring.length;
+          table([['#', 30, 'left'], ['Latitude', 79, 'left'], ['Longitude', 79, 'left'], ['E (m)', 78, 'right'], ['N (m)', 84, 'right'],
+            ['Azimute', 86, 'left'], ['Lado (m)', 79, 'right']],
+          ring.map((p, k) => {
+            const j = k + 1 < n ? k + 1 : closed ? 0 : -1;
+            const az = j < 0 ? '' : fmtAz(Math.atan2(xy[j][0] - xy[k][0], xy[j][1] - xy[k][1]) * 180 / Math.PI);
+            return [`${pre}${k + 1}`, fmtAxis(p[0], true), fmtAxis(p[1], false), nf(xy[k][0], 2), nf(xy[k][1], 2), j < 0 ? '' : `${az} → ${pre}${j + 1}`,
+              j < 0 ? '' : nf(Geo.distance(p, ring[j]), 2)];
+          }), 7.5);
+        };
+        vtable(m.points, m.type === 'area', 'P');
+        holesOf(m).forEach((h, k) => {
+          para(`Buraco ${k + 1} · ${fmtArea(Geo.area(h), S.areaUnit)}`, 9.5, true, [27, 94, 32], 4);
+          vtable(h, true, `B${k + 1}-P`);
+        });
+      }
+      if (o.pPhoto) {
+        // fotos em duas colunas, com legenda
+        const ph = await Photos.list(m.id).catch(() => []);
+        if (ph.length) { y += 4; para(`Fotos (${ph.length})`, 10, true, [27, 94, 32], 6); }
+        const colW = (CW - 12) / 2;
+        for (let k = 0; k < ph.length; k += 2) {
+          const pair = await Promise.all(ph.slice(k, k + 2).map(async r => {
+            const bmp = await createImageBitmap(r.blob);
+            const d = { r, w: bmp.width, h: bmp.height, bytes: new Uint8Array(await r.blob.arrayBuffer()) };
+            if (bmp.close) bmp.close();
+            return d;
+          }));
+          const hh = Math.max(...pair.map(d => Math.min(colW * d.h / d.w, 300)));
+          need(hh + 24);
+          pair.forEach((d, j) => {
+            let w = colW, h = colW * d.h / d.w;
+            if (h > 300) { w = w * 300 / h; h = 300; }
+            const x = M + j * (colW + 12);
+            doc.image(d.bytes, d.w, d.h, x, y, w, h);
+            doc.font('normal', 8).color([70, 70, 70]);
+            const cap = [d.r.caption, new Date(d.r.created).toLocaleDateString('pt-BR')].filter(Boolean).join(' · ');
+            doc.wrap(cap, colW).slice(0, 2).forEach((l, i) => doc.text(l, x, y + h + 10 + i * 10));
+          });
+          y += hh + 32;
+        }
       }
     }
     doc.eachPage((i, n) => {
@@ -999,8 +1336,21 @@
       if (fmt === 'pdf') return { name: safe + '.pdf', type: 'application/pdf', data: await buildPDF(items, o, safe) };
       if (fmt === 'jpg') return { name: safe + '.jpg', type: 'image/jpeg', data: await buildJPG(items, o) };
       if (fmt === 'kml') return { name: safe + '.kml', type: 'application/vnd.google-earth.kml+xml', data: Formats.toKML(items, describe) };
-      if (fmt === 'kmz') return { name: safe + '.kmz', type: 'application/vnd.google-earth.kmz',
-        data: await Zip.write([{ name: 'doc.kml', data: Formats.toKML(items, describe) }], 'application/vnd.google-earth.kmz') };
+      if (fmt === 'kmz') {
+        // as fotos vão em files/ e aparecem no balão de cada medição
+        const files = [], byItem = {};
+        for (const m of items) {
+          const ph = await Photos.list(m.id).catch(() => []);
+          byItem[m.id] = ph.map(r => {
+            const path = `files/${r.id}.jpg`;
+            files.push({ name: path, blob: r.blob });
+            return { path, caption: r.caption || '' };
+          });
+        }
+        const entries = [{ name: 'doc.kml', data: Formats.toKML(items, describe, m => byItem[m.id] || []) }];
+        for (const f of files) entries.push({ name: f.name, data: new Uint8Array(await f.blob.arrayBuffer()) });
+        return { name: safe + '.kmz', type: 'application/vnd.google-earth.kmz', data: await Zip.write(entries, 'application/vnd.google-earth.kmz') };
+      }
       if (fmt === 'gpx') return { name: safe + '.gpx', type: 'application/gpx+xml', data: Formats.toGPX(items, describe) };
       if (fmt === 'geojson') return { name: safe + '.geojson', type: 'application/geo+json', data: Formats.toGeoJSON(items, measure) };
       if (fmt === 'shp') {
@@ -1029,6 +1379,7 @@
         <div id="fPdfChk">
           <label class="layer-opt"><input type="checkbox" id="fPMap" checked>Mapa de cada medição</label>
           <label class="layer-opt"><input type="checkbox" id="fPCoord" checked>Tabela de vértices (coordenadas, lados e azimutes)</label>
+          <label class="layer-opt"><input type="checkbox" id="fPPhoto" checked>Fotos</label>
           ${items.length > 1 ? '<label class="layer-opt"><input type="checkbox" id="fPSum" checked>Página de resumo com todas</label>' : ''}
         </div>
       </div>
@@ -1051,7 +1402,7 @@
     function run(send) {
       const chk = id => !!($(id) && $(id).checked);
       const o = { crs: $('fCrs').value, zone, south, ratio: $('fRatio').value, base: $('fMapT').value, names: chk('fNames'),
-        sizes: chk('fSizes'), vertices: chk('fVtx'), hi: chk('fHi'), pMap: chk('fPMap'), pCoord: chk('fPCoord'), pSum: chk('fPSum') };
+        sizes: chk('fSizes'), vertices: chk('fVtx'), hi: chk('fHi'), pMap: chk('fPMap'), pCoord: chk('fPCoord'), pSum: chk('fPSum'), pPhoto: chk('fPPhoto') };
       make($('fFmt').value, o).then(send, err => toast('Não foi possível exportar: ' + err.message, 4000));
     }
   }
@@ -1090,7 +1441,7 @@
         const z = await Zip.read(bytes.buffer);
         // no KMZ o KML de dentro (doc.kml) leva o nome do .kmz, que vira o grupo
         Object.keys(z).filter(n => !/(^|\/)(__MACOSX|\.)/.test(n))
-          .forEach(n => entries.push({ name: e === 'kmz' && extOf(n) === 'kml' ? stemOf(f.name) + '.kml' : n, bytes: z[n] }));
+          .forEach(n => entries.push({ name: e === 'kmz' && extOf(n) === 'kml' ? stemOf(f.name) + '.kml' : n, bytes: z[n], zip: z }));
       } else entries.push({ name: f.name, bytes });
     }
     const sets = [], notes = [], shps = {};
@@ -1102,6 +1453,8 @@
       } else if (['kml', 'gpx', 'geojson', 'json'].includes(e)) {
         const text = dec.decode(en.bytes);
         const items = e === 'kml' ? Formats.fromKML(text) : e === 'gpx' ? Formats.fromGPX(text) : Formats.fromGeoJSON(text);
+        // fotos citadas no KML: bytes tirados do mesmo ZIP
+        if (en.zip) items.forEach(m => (m.photos || []).forEach(ph => { ph.bytes = en.zip[ph.src.replace(/^\.?\//, '')]; }));
         sets.push({ group: stemOf(en.name), items });
       }
     }
@@ -1131,6 +1484,7 @@
       const valid = [];
       sets.forEach(({ group, items }) => items.forEach(m => {
         if (m.points.length < { area: 3, distance: 2, poi: 1 }[m.type]) return;
+        if (m.type !== 'area') delete m.holes;
         if (!m.points.every(p => isFinite(p[0]) && isFinite(p[1]) && Math.abs(p[0]) <= 90 && Math.abs(p[1]) <= 180)) return;
         m.id = uid(); m.created = m.updated = now;
         m.color = m.color || TYPE_COLOR[m.type];
@@ -1138,6 +1492,17 @@
         valid.push(m);
       }));
       if (!valid.length) return toast(['Nenhuma geometria encontrada no arquivo'].concat(notes).join('. '), 5000);
+      // fotos (vindas do KMZ) vão para o banco de fotos, fora da medição
+      let nPh = 0;
+      for (const m of valid) {
+        const ph = m.photos || [];
+        delete m.photos;
+        for (const f of ph) {
+          if (!f.bytes) continue;
+          try { await Photos.add(m.id, new Blob([f.bytes], { type: 'image/jpeg' }), { caption: f.caption }); nPh++; } catch (err) { /* imagem ilegível */ }
+        }
+      }
+      if (nPh) notes.push(`${nPh} foto(s)`);
       store.items.push(...valid);
       persistItems(); renderSaved(); renderList();
       map.fitBounds(L.latLngBounds(valid.flatMap(m => m.points)), { padding: [40, 40], maxZoom: 18 });
@@ -1161,7 +1526,9 @@
       <div class="row2"><div><label for="fGD">GPS: marcar a cada (m)</label><input id="fGD" type="number" min="1" max="500" value="${S.gpsMinDist}"></div>
       <div><label for="fGA">GPS: precisão mínima (m)</label><input id="fGA" type="number" min="3" max="200" value="${S.gpsMaxAcc}"></div></div>
       <label for="fGS">GPS: simplificar trechos retos (m; 0 desliga)</label>
-      <input id="fGS" type="number" min="0" max="20" step="0.5" value="${S.gpsStraight}">`,
+      <input id="fGS" type="number" min="0" max="20" step="0.5" value="${S.gpsStraight}">
+      <div class="row2"><div><label for="fGO">GPS: deslocamento lateral (m)</label><input id="fGO" type="number" min="0" max="50" step="0.1" value="${S.gpsOffset}"></div>
+      <div><label for="fGOS">Lado</label><select id="fGOS"><option value="r" ${S.gpsOffSide !== 'l' ? 'selected' : ''}>à direita</option><option value="l" ${S.gpsOffSide === 'l' ? 'selected' : ''}>à esquerda</option></select></div></div>`,
     [{ label: '⬇ Mapa offline', onClick: () => { applySettings(); openOffline(); return false; } },
       { label: 'Fechar', cls: 'primary', onClick: applySettings }]);
   }
@@ -1175,6 +1542,9 @@
     S.gpsMaxAcc = Math.max(3, +$('fGA').value || defaults.gpsMaxAcc);
     const gs = parseFloat($('fGS').value);
     S.gpsStraight = isFinite(gs) ? Math.min(20, Math.max(0, gs)) : defaults.gpsStraight;
+    const go = parseFloat($('fGO').value);
+    S.gpsOffset = isFinite(go) ? Math.min(50, Math.max(0, go)) : 0;
+    S.gpsOffSide = $('fGOS').value === 'l' ? 'l' : 'r';
     S.coordFmt = COORD_FMTS[$('fCF').value] ? $('fCF').value : 'dd';
     S.datum = Proj.DATUMS[$('fDT').value] ? $('fDT').value : 'sirgas';
     persist(); renderSaved(); renderList();
@@ -1299,6 +1669,7 @@
   function applyRemote(items, deleted) {
     store.items = items;
     store.deleted = deleted;
+    Photos.prune(deleted.map(d => d.id)).catch(() => {});
     persist();
     renderSaved(); renderList();
     if (selectedId) { if (items.some(x => x.id === selectedId)) selectItem(selectedId); else { selectedId = null; showInfo(false); } }

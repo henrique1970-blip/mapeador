@@ -153,6 +153,11 @@ cada canto e toque em <span class="k">📍 Aqui</span>. O ponto entra exatamente
   marcou à mão ou arrastou nunca são trocados.</li>
 </ul>
 <p>A distância entre pontos, a precisão mínima e a tolerância de reta (0 desliga) podem ser mudadas em <span class="k">◩</span>.</p>
+<p><b>Deslocamento lateral:</b> se o celular não passa exatamente sobre a divisa (fica na cabine do trator e a divisa é a
+ponta do implemento, ou você anda pelo carreador ao lado da cerca), informe em <span class="k">◩</span> a distância e o lado
+(à direita ou à esquerda de quem anda). O aplicativo marca cada ponto deslocado para esse lado, de acordo com a direção em
+que você está indo. Os primeiros 2 m de caminhada servem para achar a direção e não marcam ponto. Lembre de voltar para 0
+quando não precisar mais.</p>
 
 <h2 id="ajustar">5. Ajustar o desenho</h2>
 <table>
@@ -165,6 +170,9 @@ cada canto e toque em <span class="k">📍 Aqui</span>. O ponto entra exatamente
   <tr><td>Jogar fora todas as mudanças de uma medição salva</td><td><span class="k">⟲</span>, que só aparece ao editar. Volta ao desenho salvo; <span class="k">↶</span> desfaz isso.</td></tr>
   <tr><td>Marcar com precisão, sem o dedo tapar o ponto</td><td><span class="k">⌖ Mira</span>: aparece uma cruz vermelha no meio do mapa. Arraste o mapa até a cruz ficar sobre o canto e toque no <span class="k">＋</span> vermelho. O painel mostra a coordenada da cruz e a distância até o vértice selecionado. Toque em <span class="k">⌖ Mira</span> de novo para voltar a marcar tocando no mapa.</td></tr>
   <tr><td>Ver a coordenada de um canto</td><td>Toque no vértice: aparecem latitude/longitude e UTM.</td></tr>
+  <tr><td>Descontar um buraco (represa, reserva, sede)</td><td><span class="k">⋯</span> › <span class="k">◌ Desenhar um buraco</span> e marque os cantos dele, tocando no mapa ou caminhando com o GPS. A área do buraco sai da área total; o perímetro continua sendo só o de fora. Os botões <span class="k">Contorno</span> e <span class="k">Buraco 1</span> escolhem qual anel você está ajustando. Para tirar um buraco, escolha-o e use <span class="k">⋯</span> › <span class="k">✕ Apagar o buraco</span>.</td></tr>
+  <tr><td>Mover ou girar a medição inteira</td><td><span class="k">⋯</span> › <span class="k">✥ Mover e girar</span>. Arraste a bolinha <span class="k">✥</span> para mover e a <span class="k">⟳</span> para girar. A área e os lados não mudam. Toque em <span class="k">✓</span> para terminar. Útil para encaixar um desenho importado que veio deslocado da imagem.</td></tr>
+  <tr><td>Dividir uma área em duas</td><td><span class="k">⋯</span> › <span class="k">✂ Cortar em duas</span> e marque dois pontos, um de cada lado da área, fora dela: a linha entre eles corta a área. A peça maior fica nesta medição e a outra vira uma medição nova ao salvar, com o mesmo grupo e cor e o nome terminado em "(2)". A linha precisa cruzar a borda só duas vezes e não pode passar por um buraco.</td></tr>
   <tr><td>Desistir</td><td><span class="k">Cancelar</span>.</td></tr>
 </table>
 <p>Para alterar uma medição já salva, toque nela no mapa (ou na lista <span class="k">☰</span>) e depois em <span class="k">✎ Editar</span>.</p>
@@ -174,6 +182,14 @@ cada canto e toque em <span class="k">📍 Aqui</span>. O ponto entra exatamente
   <li><b>Distância:</b> <span class="k">＋</span> › <span class="k">Distância</span> e toque nos pontos do caminho, em ordem. O total aparece no painel e cada trecho tem sua medida no mapa.</li>
   <li><b>Ponto:</b> <span class="k">＋</span> › <span class="k">Ponto</span> e toque no local, ou use <span class="k">📍 Aqui</span> para gravar onde você está. Serve para marcar porteira, nascente, poço, marco de divisa ou ponto de coleta. O painel mostra a coordenada em graus e em UTM.</li>
 </ol>
+
+<h3>Fotos</h3>
+<p>Toque numa medição salva e em <span class="k">📷</span>, depois em <span class="k">＋ Adicionar foto</span>: dá para tirar
+a foto na hora ou escolher da galeria. Toque numa foto para ver em tamanho grande, escrever uma legenda, enviar ou apagar.
+Se o GPS estiver ligado, a posição fica anotada na foto.</p>
+<div class="note">As fotos ficam <b>só neste aparelho</b>: a sincronização leva as medições, não as fotos. Elas vão junto no
+<b>relatório PDF</b> e no <b>KMZ</b> exportado. Para levar medições com fotos para outro aparelho, exporte em KMZ e importe lá.
+Excluir a medição apaga as fotos dela.</div>
 
 <h2 id="salvar">7. Salvar e organizar</h2>
 <ol class="steps">
@@ -199,7 +215,7 @@ Tocar numa medição da lista leva o mapa até ela.</p>
   a área em várias unidades, o perímetro, as observações e a tabela de vértices. A tabela traz latitude e longitude, UTM, o
   azimute e o comprimento de cada lado. Com várias medições, a primeira página é um resumo com o mapa geral, a lista e a área total.</td></tr>
   <tr><td><b>Imagem JPG</b></td><td>Foto do mapa com as medições, para mandar por WhatsApp ou pôr num documento.</td></tr>
-  <tr><td><b>KML</b> / <b>KMZ</b></td><td>Google Earth, QGIS, aparelhos GPS. O KMZ é o mesmo KML compactado.</td></tr>
+  <tr><td><b>KML</b> / <b>KMZ</b></td><td>Google Earth, QGIS, aparelhos GPS. O KMZ é o KML compactado e leva também as fotos, que aparecem no balão de cada medição no Google Earth.</td></tr>
   <tr><td><b>GPX</b></td><td>Aparelhos GPS (Garmin e outros) e aplicativos de trilha. Áreas vão como trilha fechada; pontos, como waypoints.</td></tr>
   <tr><td><b>Shapefile</b> (.zip)</td><td>QGIS, ArcGIS e sistemas de órgãos públicos. O .zip traz um shapefile para áreas, um para linhas e um para pontos,
   com nome, grupo, área (ha e m²), perímetro, cor e observações na tabela de atributos.</td></tr>
@@ -229,8 +245,9 @@ Um relatório com muitas medições demora alguns segundos por mapa: espere a me
   <li>As geometrias entram no grupo com o nome do arquivo. O nome de cada item vem do campo <b>nome</b> (ou <b>name</b>) da tabela;
   os outros campos vão para as observações.</li>
 </ol>
-<div class="note">Buracos de polígono (uma reserva dentro do talhão, por exemplo) ainda não são importados: o contorno de fora entra
-e o aplicativo avisa quantos buracos ficaram de fora. Arquivos <b>DXF</b> ainda não são importados, só exportados.</div>
+<div class="note">Buracos de polígono (uma reserva dentro do talhão, por exemplo) entram como buracos da área, no KML, KMZ,
+GeoJSON e Shapefile. O KMZ exportado pelo Mapeador traz de volta também as fotos. Arquivos <b>DXF</b> ainda não são
+importados, só exportados.</div>
 
 <h2 id="offline">9. Usar sem internet</h2>
 <p>Depois de aberto uma vez com internet, o Mapeador funciona sem sinal: medir, salvar, editar, usar o GPS e exportar.
@@ -298,7 +315,7 @@ gist <b>secreto</b>: ele não aparece em buscas, mas quem tiver o endereço exat
   <li><b>Coordenadas:</b> graus decimais, graus e minutos, ou graus, minutos e segundos. Vale para pontos e vértices; o UTM aparece sempre junto.</li>
   <li><b>Datum do UTM:</b> SIRGAS 2000 (padrão), SAD69 ou Córrego Alegre. Muda o UTM mostrado no painel e o da busca. No SAD69 o mesmo
   ponto fica cerca de 60 m deslocado em relação ao SIRGAS 2000; use-o só para conferir com mapas ou memoriais antigos.</li>
-  <li><b>GPS:</b> de quantos em quantos metros marcar um ponto, qual a pior precisão aceita e a tolerância para simplificar trechos retos.</li>
+  <li><b>GPS:</b> de quantos em quantos metros marcar um ponto, qual a pior precisão aceita, a tolerância para simplificar trechos retos e o deslocamento lateral (ver a <a href="#gps">seção 4</a>).</li>
   <li><b>Nomes das medições:</b> mostra ou esconde os rótulos no mapa.</li>
 </ul>
 <p>As áreas são calculadas sobre o elipsoide WGS84 (o mesmo do GPS e, para efeito prático, do SIRGAS 2000), com a precisão de

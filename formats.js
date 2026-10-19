@@ -16,7 +16,19 @@
     return pts.map(p => `${p[1].toFixed(8)},${p[0].toFixed(8)},0`).join(' ');
   }
 
-  function toKML(items, describe) {
+  // buracos válidos de uma área (anéis com 3+ vértices)
+  const holesOf = m => m.type === 'area' && Array.isArray(m.holes) ? m.holes.filter(h => h && h.length >= 3) : [];
+  function pointInRing(p, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const a = ring[i], b = ring[j];
+      if ((a[0] > p[0]) !== (b[0] > p[0]) && p[1] < (b[1] - a[1]) * (p[0] - a[0]) / (b[0] - a[0]) + a[1]) inside = !inside;
+    }
+    return inside;
+  }
+
+  // photosOf(m) → [{ path, caption }]: fotos que vão dentro do KMZ, mostradas no balão do Google Earth
+  function toKML(items, describe, photosOf) {
     const styles = [], marks = [];
     items.forEach((m, i) => {
       const sid = 's' + i;
@@ -26,16 +38,22 @@
       const desc = [describe ? describe(m) : '', m.group ? 'Grupo: ' + m.group : '', m.notes || ''].filter(Boolean).join('\n');
       let geom;
       if (m.type === 'area') {
-        geom = `<Polygon><outerBoundaryIs><LinearRing><coordinates>${coordStr(m.points, true)}</coordinates></LinearRing></outerBoundaryIs></Polygon>`;
+        geom = `<Polygon><outerBoundaryIs><LinearRing><coordinates>${coordStr(m.points, true)}</coordinates></LinearRing></outerBoundaryIs>` +
+          holesOf(m).map(h => `<innerBoundaryIs><LinearRing><coordinates>${coordStr(h, true)}</coordinates></LinearRing></innerBoundaryIs>`).join('') + '</Polygon>';
       } else if (m.type === 'distance') {
         geom = `<LineString><tessellate>1</tessellate><coordinates>${coordStr(m.points, false)}</coordinates></LineString>`;
       } else {
         geom = `<Point><coordinates>${coordStr(m.points.slice(0, 1), false)}</coordinates></Point>`;
       }
-      marks.push(`<Placemark><name>${esc(m.name)}</name><description>${esc(desc)}</description>` +
+      const ph = photosOf ? photosOf(m) : [];
+      const descXml = ph.length
+        ? `<![CDATA[${esc(desc).replace(/\n/g, '<br>')}${ph.map(f => `<br><img src="${f.path}" width="480" alt="${esc(f.caption)}"><br>${esc(f.caption)}`).join('')}]]>`
+        : esc(desc);
+      marks.push(`<Placemark><name>${esc(m.name)}</name><description>${descXml}</description>` +
         `<styleUrl>#${sid}</styleUrl>` +
         `<ExtendedData><Data name="grupo"><value>${esc(m.group)}</value></Data>` +
-        `<Data name="tipo"><value>${m.type}</value></Data></ExtendedData>${geom}</Placemark>`);
+        `<Data name="tipo"><value>${m.type}</value></Data><Data name="notas"><value>${esc(m.notes)}</value></Data>` +
+        `<Data name="cor"><value>${esc(m.color)}</value></Data></ExtendedData>${geom}</Placemark>`);
     });
     return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>` +
       `<name>Mapeador de Áreas</name>${styles.join('')}${marks.join('')}</Document></kml>`;
@@ -47,7 +65,7 @@
       features: items.map(m => {
         const ll = m.points.map(p => [p[1], p[0]]);
         let geometry;
-        if (m.type === 'area') geometry = { type: 'Polygon', coordinates: [ll.concat([ll[0]])] };
+        if (m.type === 'area') geometry = { type: 'Polygon', coordinates: [ll.concat([ll[0]])].concat(holesOf(m).map(h => h.map(q => [q[1], q[0]]).concat([[h[0][1], h[0][0]]]))) };
         else if (m.type === 'distance') geometry = { type: 'LineString', coordinates: ll };
         else geometry = { type: 'Point', coordinates: ll[0] };
         return {
@@ -61,12 +79,12 @@
 
   // xy: coordenadas em outro sistema ({ head: 'utm_23S_sirgas_2000_E_N', f: p => [E, N] }); sem ele, lat lng
   function toCSV(items, measure, xy) {
-    const rows = [['nome', 'grupo', 'tipo', 'area_m2', 'area_ha', 'perimetro_ou_comprimento_m', 'vertices', xy ? xy.head : 'lat_lng']];
+    const rows = [['nome', 'grupo', 'tipo', 'area_m2', 'area_ha', 'perimetro_ou_comprimento_m', 'vertices', xy ? xy.head : 'lat_lng', 'buracos']];
     const fmt = xy ? p => xy.f(p).map(v => v.toFixed(3)).join(' ') : p => `${p[0].toFixed(7)} ${p[1].toFixed(7)}`;
     items.forEach(m => {
       const v = measure(m);
       rows.push([m.name, m.group || '', m.type, v.area_m2 ?? '', v.area_ha ?? '', v.length_m ?? '', m.points.length,
-        m.points.map(fmt).join('; ')]);
+        m.points.map(fmt).join('; '), holesOf(m).map(h => h.map(fmt).join('; ')).join(' | ')]);
     });
     return '﻿' + rows.map(r => r.map(c => {
       const s = String(c);
@@ -96,14 +114,30 @@
     byTag(doc, 'Placemark').forEach((pm, i) => {
       const nameEl = byTag(pm, 'name')[0];
       const descEl = byTag(pm, 'description')[0];
-      const base = { name: nameEl ? nameEl.textContent.trim() : 'Importado ' + (i + 1), notes: descEl ? descEl.textContent.trim() : '' };
+      let notes = descEl ? descEl.textContent.trim() : '';
+      // descrição em HTML com fotos (KMZ): guarda as imagens e deixa só o texto nas observações
+      const photos = [];
+      if (/<img\b/i.test(notes)) {
+        const html = new DOMParser().parseFromString(notes, 'text/html');
+        html.querySelectorAll('img').forEach(im => { photos.push({ src: im.getAttribute('src') || '', caption: im.getAttribute('alt') || '' }); im.remove(); });
+        html.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+        notes = html.body.textContent.split('\n').map(l => l.trim()).filter(l => l && !photos.some(f => f.caption && f.caption === l)).join('\n');
+      }
+      const base = { name: nameEl ? nameEl.textContent.trim() : 'Importado ' + (i + 1), notes };
+      if (photos.length) base.photos = photos;
       byTag(pm, 'Data').forEach(d => {
-        if (d.getAttribute('name') === 'grupo') base.group = (byTag(d, 'value')[0] || {}).textContent || '';
+        const v = (byTag(d, 'value')[0] || {}).textContent || '';
+        // KML do próprio Mapeador: observações e cor vêm limpas do ExtendedData, não da descrição
+        if (d.getAttribute('name') === 'grupo') base.group = v;
+        if (d.getAttribute('name') === 'notas') base.notes = v;
+        if (d.getAttribute('name') === 'cor' && /^#[0-9a-f]{6}$/i.test(v)) base.color = v;
       });
       byTag(pm, 'Polygon').forEach(pg => {
         const outer = byTag(pg, 'outerBoundaryIs')[0] || pg;
         const c = byTag(outer, 'coordinates')[0];
-        if (c) out.push(Object.assign({ type: 'area', points: dropClosing(parseCoords(c.textContent)) }, base));
+        const holes = byTag(pg, 'innerBoundaryIs').map(ib => byTag(ib, 'coordinates')[0]).filter(Boolean)
+          .map(h => dropClosing(parseCoords(h.textContent))).filter(h => h.length >= 3);
+        if (c) out.push(Object.assign({ type: 'area', points: dropClosing(parseCoords(c.textContent)) }, holes.length ? { holes } : {}, base));
       });
       byTag(pm, 'LineString').forEach(ls => {
         const c = byTag(ls, 'coordinates')[0];
@@ -129,7 +163,10 @@
       const g = f.geometry;
       if (!g) return;
       const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
-      polys.forEach(poly => out.push(Object.assign({ type: 'area', points: dropClosing(poly[0].map(ll)) }, base)));
+      polys.forEach(poly => {
+        const holes = poly.slice(1).map(h => dropClosing(h.map(ll))).filter(h => h.length >= 3);
+        out.push(Object.assign({ type: 'area', points: dropClosing(poly[0].map(ll)) }, holes.length ? { holes } : {}, base));
+      });
       const lines = g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : [];
       lines.forEach(line => out.push(Object.assign({ type: 'distance', points: line.map(ll) }, base)));
       const pts = g.type === 'Point' ? [g.coordinates] : g.type === 'MultiPoint' ? g.coordinates : [];
@@ -204,11 +241,15 @@
         const idx = []; for (let k = 0; k < nParts; k++) idx.push(dv.getInt32(r + 44 + k * 4, true));
         const all = read(r + 44 + nParts * 4, nPts);
         const parts = idx.map((s, k) => all.slice(s, k + 1 < nParts ? idx[k + 1] : nPts));
-        // polígono: anel horário é contorno, anti-horário é buraco (o app ainda não tem buracos)
-        const rings = kind === 5 ? parts.filter(ring => { const outer = signedArea(ring) < 0; if (!outer) skipped++; return outer; }) : parts;
-        rings.forEach((pts, k) => {
+        // polígono: anel horário é contorno, anti-horário é buraco do contorno que o contém
+        const rings = kind === 5 ? parts.filter(ring => signedArea(ring) < 0).map(ring => ({ points: dropClosing(ring), holes: [] })) : parts.map(points => ({ points }));
+        if (kind === 5) parts.filter(ring => signedArea(ring) >= 0).forEach(h => {
+          const hole = dropClosing(h), host = rings.find(o => pointInRing(hole[0], o.points));
+          if (host && hole.length >= 3) host.holes.push(hole); else skipped++;
+        });
+        rings.forEach((g, k) => {
           const b = rings.length > 1 ? Object.assign({}, base, { name: `${base.name} (${k + 1})` }) : base;
-          out.push(Object.assign({ type: kind === 5 ? 'area' : 'distance', points: kind === 5 ? dropClosing(pts) : pts }, b));
+          out.push(Object.assign({ type: kind === 5 ? 'area' : 'distance', points: g.points }, g.holes && g.holes.length ? { holes: g.holes } : {}, b));
         });
       }
       p += 8 + len; i++;
@@ -272,15 +313,13 @@
     [['area', 5, '_areas'], ['distance', 3, '_linhas'], ['poi', 1, '_pontos']].forEach(([t, shpType, suf]) => {
       const list = items.filter(m => m.type === t);
       if (!list.length) return;
-      const geoms = list.map(m => {
-        let pts = m.points.map(proj);
-        if (t === 'area') {
-          // contorno no sentido horário, fechado
-          if (signedArea(pts.map(q => [q[1], q[0]])) > 0) pts = pts.slice().reverse();
-          pts = pts.concat([pts[0]]);
-        }
-        return pts;
-      });
+      // cada geometria é uma lista de partes; na área, contorno no sentido horário e buracos no anti-horário, fechados
+      const ring = (pts, cw) => {
+        let q = pts.map(proj);
+        if ((signedArea(q.map(v => [v[1], v[0]])) > 0) === cw) q = q.slice().reverse();
+        return q.concat([q[0]]);
+      };
+      const geoms = list.map(m => t === 'area' ? [ring(m.points, true)].concat(holesOf(m).map(h => ring(h, false))) : [m.points.map(proj)]);
       const name = baseName + suf;
       const [shp, shx] = writeSHP(geoms, shpType);
       files.push({ name: name + '.shp', data: shp }, { name: name + '.shx', data: shx },
@@ -299,10 +338,10 @@
     return b;
   }
   function writeSHP(geoms, type) {
-    const sizes = geoms.map(g => type === 1 ? 20 : 44 + 4 + g.length * 16);
+    const sizes = geoms.map(g => type === 1 ? 20 : 44 + 4 * g.length + g.flat().length * 16);
     const shpLen = 100 + sizes.reduce((s, c) => s + 8 + c, 0), shxLen = 100 + geoms.length * 8;
     const shp = new DataView(new ArrayBuffer(shpLen)), shx = new DataView(new ArrayBuffer(shxLen));
-    const all = bbox(geoms.flat());
+    const all = bbox(geoms.flat(2));
     [[shp, shpLen], [shx, shxLen]].forEach(([h, len]) => {
       h.setInt32(0, 9994, false); h.setInt32(24, len / 2, false); h.setInt32(28, 1000, true); h.setInt32(32, type, true);
       all.forEach((v, k) => h.setFloat64(36 + k * 8, v, true));
@@ -313,11 +352,14 @@
       shp.setInt32(o, i + 1, false); shp.setInt32(o + 4, sizes[i] / 2, false);
       const r = o + 8;
       shp.setInt32(r, type, true);
-      if (type === 1) { shp.setFloat64(r + 4, g[0][0], true); shp.setFloat64(r + 12, g[0][1], true); }
+      if (type === 1) { shp.setFloat64(r + 4, g[0][0][0], true); shp.setFloat64(r + 12, g[0][0][1], true); }
       else {
-        bbox(g).forEach((v, k) => shp.setFloat64(r + 4 + k * 8, v, true));
-        shp.setInt32(r + 36, 1, true); shp.setInt32(r + 40, g.length, true); shp.setInt32(r + 44, 0, true);
-        g.forEach((q, k) => { shp.setFloat64(r + 48 + k * 16, q[0], true); shp.setFloat64(r + 56 + k * 16, q[1], true); });
+        const pts = g.flat(), base = r + 44 + 4 * g.length;
+        bbox(pts).forEach((v, k) => shp.setFloat64(r + 4 + k * 8, v, true));
+        shp.setInt32(r + 36, g.length, true); shp.setInt32(r + 40, pts.length, true);
+        let start = 0;
+        g.forEach((part, k) => { shp.setInt32(r + 44 + k * 4, start, true); start += part.length; });
+        pts.forEach((q, k) => { shp.setFloat64(base + k * 16, q[0], true); shp.setFloat64(base + 8 + k * 16, q[1], true); });
       }
       o += 8 + sizes[i];
     });
@@ -382,9 +424,11 @@
       const pts = geoms[i], layer = t(layerOf(m));
       if (m.type === 'poi') { g(0, 'POINT'); g(8, layer); g(10, pts[0][0].toFixed(3)); g(20, pts[0][1].toFixed(3)); g(30, 0); }
       else {
-        g(0, 'POLYLINE'); g(8, layer); g(66, 1); g(10, 0); g(20, 0); g(30, 0); g(70, m.type === 'area' ? 1 : 0);
-        pts.forEach(p => { g(0, 'VERTEX'); g(8, layer); g(10, p[0].toFixed(3)); g(20, p[1].toFixed(3)); g(30, 0); });
-        g(0, 'SEQEND'); g(8, layer);
+        [pts].concat(holesOf(m).map(h => h.map(proj))).forEach(ring => {
+          g(0, 'POLYLINE'); g(8, layer); g(66, 1); g(10, 0); g(20, 0); g(30, 0); g(70, m.type === 'area' ? 1 : 0);
+          ring.forEach(p => { g(0, 'VERTEX'); g(8, layer); g(10, p[0].toFixed(3)); g(20, p[1].toFixed(3)); g(30, 0); });
+          g(0, 'SEQEND'); g(8, layer);
+        });
       }
       // rótulo: no ponto, no meio da linha ou no centro do polígono
       const at = m.type === 'poi' ? [pts[0][0] + h * 0.6, pts[0][1] + h * 0.6]
@@ -397,5 +441,5 @@
     return Uint8Array.from(out.join('\r\n') + '\r\n', c => c.charCodeAt(0));
   }
 
-  root.Formats = { toKML, toGeoJSON, toCSV, toGPX, toSHP, toDXF, fromKML, fromGeoJSON, fromGPX, fromSHP };
+  root.Formats = { toKML, toGeoJSON, toCSV, toGPX, toSHP, toDXF, fromKML, fromGeoJSON, fromGPX, fromSHP, pointInRing };
 })(this);
