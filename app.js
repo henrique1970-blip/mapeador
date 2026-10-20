@@ -1617,6 +1617,9 @@
     const g = $('groupFilter').value;
     exportDialog(store.items.filter(m => !g || m.group === g), g || 'medicoes');
   };
+  // Android: sem accept, o Chrome oferece câmera e filmadora; com extensões, .kmz e .shp somem do seletor.
+  // Curingas de tipo abrem direto o seletor de arquivos sem esconder nenhum formato.
+  if (/Android/i.test(navigator.userAgent)) $('fileInput').accept = 'application/*,text/*';
   $('btnImport').onclick = () => $('fileInput').click();
 
   // Lê os arquivos escolhidos (soltos ou dentro de .zip/.kmz) e devolve { sets: [{ group, items }], notes }
@@ -1769,7 +1772,7 @@
       ${def == null ? '<p style="color:var(--danger)">A área na tela é grande demais. Aproxime o mapa e tente de novo.</p>' : `
       <label for="fZ">Nível de detalhe</label>
       <select id="fZ">${choices.map(c => `<option value="${c.zMax}" ${c.ok ? '' : 'disabled'} ${c.zMax === def ? 'selected' : ''}>
-        Zoom ${c.zMax}${c.zMax >= 18 ? ' (ver cercas e trilhas)' : c.zMax >= 16 ? ' (ver talhões)' : ''} · ${nf(c.n, 0)} blocos · ~${nf(c.n * 15 / 1024, 0)} MB${c.ok ? '' : ' — grande demais'}</option>`).join('')}
+        Zoom ${c.zMax}${c.zMax >= 18 ? ' · cercas' : c.zMax >= 16 ? ' · talhões' : ''} · ${!c.ok ? 'grande demais' : c.n * 15 < 1024 ? '<1 MB' : `~${nf(c.n * 15 / 1024, 0)} MB`}</option>`).join('')}
       </select>`}
       <p id="offInfo" style="color:var(--muted);font-size:13px">Verificando o que já está guardado…</p>`,
     [{ label: 'Apagar baixados', cls: 'danger', onClick: () => {
