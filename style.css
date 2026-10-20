@@ -180,3 +180,10 @@ input, select, textarea { font: inherit; color: var(--fg); background: var(--bg)
 .photo-view { width: 100%; max-height: 52vh; object-fit: contain; border-radius: 8px; background: #000; display: block; }
 /* botões dos diálogos: texto longo quebra a linha em vez de vazar (ex.: "Apagar baixados" ao lado de Fechar e Baixar) */
 #modalActions .tool { white-space: normal; height: auto; min-height: 42px; line-height: 1.15; padding: 6px 8px; overflow-wrap: anywhere; }
+/* Grupo 5: lista de camadas e medições recebidas por link */
+.ov-row { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); }
+.ov-row .layer-opt { flex: 1; min-width: 0; border: 0; }
+.ov-row input[type=range] { width: 80px; }
+.shared-list { list-style: none; padding: 0; margin: 0; max-height: 40vh; overflow: auto; }
+.shared-list li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.shared-list span { color: var(--muted); font-size: 13px; }

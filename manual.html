@@ -72,6 +72,8 @@
     <li><a href="#offline">Usar sem internet</a></li>
     <li><a href="#sync">Sincronizar entre aparelhos</a></li>
     <li><a href="#unidades">Mapas e unidades</a></li>
+    <li><a href="#camadas">Camadas de órgãos públicos (CAR, ANM…)</a></li>
+    <li><a href="#gpsext">GPS externo</a></li>
     <li><a href="#duvidas">Dúvidas e problemas</a></li>
   </ol>
 </nav>
@@ -215,6 +217,7 @@ Tocar numa medição da lista leva o mapa até ela.</p>
   a área em várias unidades, o perímetro, as observações e a tabela de vértices. A tabela traz latitude e longitude, UTM, o
   azimute e o comprimento de cada lado. Com várias medições, a primeira página é um resumo com o mapa geral, a lista e a área total.</td></tr>
   <tr><td><b>Imagem JPG</b></td><td>Foto do mapa com as medições, para mandar por WhatsApp ou pôr num documento.</td></tr>
+  <tr><td><b>Link</b></td><td>Um endereço para mandar por WhatsApp ou e-mail. Quem abre vê as medições no mapa, no navegador, sem instalar nada, e pode guardá-las no próprio aparelho. As medições vão <b>dentro do link</b>, sem passar por servidor nenhum; as fotos não vão. <span class="k">Copiar link</span> copia; <span class="k">Compartilhar</span> abre o WhatsApp e os outros aplicativos.</td></tr>
   <tr><td><b>KML</b> / <b>KMZ</b></td><td>Google Earth, QGIS, aparelhos GPS. O KMZ é o KML compactado e leva também as fotos, que aparecem no balão de cada medição no Google Earth.</td></tr>
   <tr><td><b>GPX</b></td><td>Aparelhos GPS (Garmin e outros) e aplicativos de trilha. Áreas vão como trilha fechada; pontos, como waypoints.</td></tr>
   <tr><td><b>Shapefile</b> (.zip)</td><td>QGIS, ArcGIS e sistemas de órgãos públicos. O .zip traz um shapefile para áreas, um para linhas e um para pontos,
@@ -322,7 +325,37 @@ gist <b>secreto</b>: ele não aparece em buscas, mas quem tiver o endereço exat
 programas de geoprocessamento como o QGIS. A exatidão final depende de como os pontos foram marcados: imagem de satélite pode
 estar alguns metros deslocada, e o GPS de celular costuma errar de 3 a 10 metros.</p>
 
-<h2 id="duvidas">12. Dúvidas e problemas</h2>
+<h2 id="camadas">12. Camadas de órgãos públicos (CAR, ANM…)</h2>
+<p>Dá para pôr por cima da imagem os limites que os órgãos publicam, para conferir divisas e sobreposições:</p>
+<ol class="steps">
+  <li><span class="k">◩</span> › <span class="k">🗺 Camadas</span> › <span class="k">＋ Adicionar</span>.</li>
+  <li>Escolha uma das prontas: <b>CAR</b> (imóveis rurais, por estado), <b>ANM</b> (processos minerários ativos, do SIGMINE),
+  <b>ICMBio</b> (unidades de conservação federais), <b>SGB</b> (geologia 1:1.000.000 e poços do SIAGAS).</li>
+  <li>Ou informe o endereço de outro servidor <b>WMS</b> (toque em <span class="k">Buscar camadas</span> para ver a lista) ou de
+  blocos <b>XYZ</b> (endereço com <span class="k">{z}</span>, <span class="k">{x}</span> e <span class="k">{y}</span>). O endereço precisa começar com https://.</li>
+</ol>
+<p>Na lista de camadas, a caixinha liga e desliga, a barra muda a transparência e <span class="k">✕</span> remove. As camadas
+ligadas também saem na imagem JPG e nos mapas do relatório PDF, quando o servidor permite.</p>
+<div class="note">As camadas vêm do servidor de cada órgão, na hora: precisam de internet, não entram no mapa offline e podem
+ficar fora do ar quando o servidor estiver. Servem para ver; para medir, desenhe a área normalmente por cima.</div>
+
+<h2 id="gpsext">13. GPS externo</h2>
+<p>Um receptor GNSS externo (de antena melhor, ou RTK, com precisão de centímetros) pode substituir o GPS do celular.
+Ele precisa mandar posições em <b>NMEA</b>, o padrão da maioria dos receptores.</p>
+<ol class="steps">
+  <li>Ligue o receptor e, se for Bluetooth, deixe-o perto do celular.</li>
+  <li><span class="k">◩</span> › <span class="k">📡 GPS externo</span> e escolha <span class="k">Bluetooth LE</span> ou <span class="k">Porta serial</span>.</li>
+  <li>Escolha o aparelho na lista que o Chrome mostrar.</li>
+  <li>O selo passa a mostrar <b>GPS ext</b>, a precisão, o tipo de correção (GPS, DGPS, <b>RTK fixo</b>, RTK flutuante) e o número de satélites.
+  A partir daí tudo usa o receptor: <span class="k">◎</span>, <span class="k">📍 Aqui</span> e a gravação caminhando.</li>
+</ol>
+<div class="note"><b>Funciona no Chrome do Android e do computador; no iPhone, não</b> (a Apple não deixa sites usarem Bluetooth).
+<b>Bluetooth LE</b>: receptores com serviço UART (padrão Nordic) ou módulos HM-10. <b>Porta serial</b>: cabo USB e, onde o Chrome
+oferecer, Bluetooth clássico. Receptores só de Bluetooth clássico que não aparecerem na lista ainda não funcionam pelo navegador.
+A precisão vem da mensagem GST do receptor; se ele não mandar, é estimada pelo HDOP. Se o receptor desconectar, o app volta
+sozinho para o GPS do celular e avisa.</div>
+
+<h2 id="duvidas">14. Dúvidas e problemas</h2>
 <h3>"Permissão de localização negada"</h3>
 <ul>
   <li><b>iPhone:</b> Ajustes › Privacidade e Segurança › Serviços de Localização › Safari (ou Sites do Safari) › "Ao Usar o App". Se instalou na tela inicial, procure também pelo nome Mapeador.</li>

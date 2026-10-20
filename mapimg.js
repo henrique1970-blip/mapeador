@@ -49,7 +49,11 @@
         jobs.push(async () => {
           try {
             const t = await layer(zt, x, ty);
-            if (t) ctx.drawImage(t.img, t.sx, t.sy, t.sw, t.sw, Math.floor(dx), Math.floor(dy), Math.ceil(ts) + 1, Math.ceil(ts) + 1);
+            if (t) {
+              ctx.globalAlpha = t.alpha ?? 1; // camadas por cima (WMS) com a transparência escolhida
+              ctx.drawImage(t.img, t.sx, t.sy, t.sw, t.sw, Math.floor(dx), Math.floor(dy), Math.ceil(ts) + 1, Math.ceil(ts) + 1);
+              ctx.globalAlpha = 1;
+            }
           } catch (e) { failed++; }
         });
       }

@@ -31,7 +31,7 @@
 
   // ---------- Armazenamento ----------
   const defaults = { areaUnit: 'ha', lenUnit: 'm', layer: 'hybrid', labels: true, gpsMinDist: 5, gpsMaxAcc: 25,
-    gpsStraight: 1, gpsOffset: 0, gpsOffSide: 'r', coordFmt: 'dd', datum: 'sirgas', view: null };
+    gpsStraight: 1, gpsOffset: 0, gpsOffSide: 'r', coordFmt: 'dd', datum: 'sirgas', overlays: [], view: null };
   // deleted: marcas de exclusão {id, updated}, para a exclusão chegar aos outros aparelhos
   let store = { items: [], deleted: [], settings: Object.assign({}, defaults) };
   try {
@@ -230,6 +230,132 @@
     S.layer = key;
   }
   setBase(S.layer);
+
+  // ---------- Camadas por cima do mapa (WMS e XYZ) ----------
+  // { id, title, kind: 'wms' | 'xyz', url, layers, version, opacity, on }. Pedidas em EPSG:3857 (o mesmo do mapa).
+  const UFS = 'AC AL AM AP BA CE DF ES GO MA MG MS MT PA PB PE PI PR RJ RN RO RR RS SC SE SP TO'.split(' ');
+  const WMS_PRESETS = [
+    { key: 'car', title: 'CAR · imóveis rurais', url: 'https://geoserver.car.gov.br/geoserver/sicar/wms', layers: uf => `sicar_imoveis_${uf.toLowerCase()}`, uf: true },
+    { key: 'anm', title: 'ANM · processos minerários ativos (SIGMINE)', url: 'https://geo.anm.gov.br/arcgis/services/SIGMINE/dados_anm/MapServer/WMSServer', layers: () => '4' },
+    { key: 'uc', title: 'ICMBio · unidades de conservação federais', url: 'https://geoservicos.inde.gov.br/geoserver/ICMBio/wms', layers: () => 'limiteucsfederais_a' },
+    { key: 'geo', title: 'SGB · geologia 1:1.000.000', url: 'https://geoservicos.sgb.gov.br/geoserver/wms', layers: () => 'geosgb:litoestratigrafia_1m' },
+    { key: 'pocos', title: 'SGB · poços (SIAGAS)', url: 'https://geoservicos.sgb.gov.br/geoserver/wms', layers: () => 'hidrogeologia:siagas' }
+  ];
+  if (!Array.isArray(S.overlays)) S.overlays = [];
+  const overlayGroup = L.layerGroup().addTo(map);
+  function overlayLayer(o) {
+    const op = { opacity: o.opacity ?? 0.7, maxZoom: 21, zIndex: 50, attribution: esc(o.title) };
+    if (o.kind === 'xyz') return L.tileLayer(o.url, Object.assign({ maxNativeZoom: 19 }, op));
+    return L.tileLayer.wms(o.url, Object.assign({ layers: o.layers, format: 'image/png', transparent: true, version: o.version || '1.3.0', styles: '' }, op));
+  }
+  function renderOverlays() {
+    overlayGroup.clearLayers();
+    S.overlays.filter(o => o.on).forEach(o => overlayLayer(o).addTo(overlayGroup));
+  }
+  renderOverlays();
+  // bloco z/x/y de uma camada, para a imagem exportada (JPG e PDF). Servidor sem CORS: o bloco fica de fora.
+  function overlayCrop(o) {
+    return async (z, x, y) => {
+      let url;
+      if (o.kind === 'xyz') url = o.url.replace('{s}', 'a').replace('{z}', z).replace('{x}', x).replace('{y}', y);
+      else {
+        const W = 20037508.342789244, sz = 2 * W / 2 ** z;
+        const bb = [-W + x * sz, W - (y + 1) * sz, -W + (x + 1) * sz, W - y * sz].map(v => v.toFixed(3)).join(',');
+        const v13 = (o.version || '1.3.0') === '1.3.0';
+        // parâmetros em maiúsculas (o WMS não diferencia): a URL fica diferente da que o mapa pediu sem CORS,
+        // e o navegador não reaproveita aquela resposta do cache, que não serve para desenhar no canvas
+        url = `${o.url}${o.url.includes('?') ? '&' : '?'}SERVICE=WMS&REQUEST=GetMap&VERSION=${o.version || '1.3.0'}&LAYERS=${encodeURIComponent(o.layers)}` +
+          `&STYLES=&FORMAT=image/png&TRANSPARENT=true&WIDTH=256&HEIGHT=256&${v13 ? 'CRS' : 'SRS'}=EPSG:3857&BBOX=${bb}`;
+      }
+      try { return { img: await loadImg(url), sx: 0, sy: 0, sw: 256, alpha: o.opacity ?? 0.7 }; } catch (e) { return null; }
+    };
+  }
+  const activeOverlayCrops = () => S.overlays.filter(o => o.on).map(overlayCrop);
+  // camadas que o servidor anuncia (GetCapabilities); null quando não dá para ler (servidor sem CORS, fora do ar)
+  async function wmsLayers(url) {
+    const base = url.replace(/[?&]+$/, '');
+    for (const ver of ['1.3.0', '1.1.1']) {
+      try {
+        const r = await fetch(`${base}${base.includes('?') ? '&' : '?'}service=WMS&request=GetCapabilities&version=${ver}`);
+        if (!r.ok) continue;
+        const doc = new DOMParser().parseFromString(await r.text(), 'application/xml');
+        const root = doc.documentElement;
+        if (!root || doc.getElementsByTagName('parsererror').length) continue;
+        const kid = (el, t) => Array.from(el.children).find(c => c.localName === t);
+        const out = Array.from(doc.getElementsByTagNameNS('*', 'Layer')).map(l => ({ name: (kid(l, 'Name') || {}).textContent, title: (kid(l, 'Title') || {}).textContent }))
+          .filter(l => l.name);
+        const crs = Array.from(doc.getElementsByTagNameNS('*', ver === '1.3.0' ? 'CRS' : 'SRS')).map(c => c.textContent.trim());
+        return { version: root.getAttribute('version') || ver, layers: out, mercator: crs.some(c => /EPSG:(3857|900913|102100)/.test(c)) };
+      } catch (e) { /* tenta a outra versão */ }
+    }
+    return null;
+  }
+  function openOverlays() {
+    const list = S.overlays.map((o, i) => `
+      <div class="ov-row">
+        <label class="layer-opt"><input type="checkbox" data-ov-on="${i}" ${o.on ? 'checked' : ''}>${esc(o.title)}</label>
+        <input type="range" min="0.2" max="1" step="0.1" value="${o.opacity ?? 0.7}" data-ov-op="${i}" aria-label="Transparência">
+        <button class="tool mini danger" data-ov-del="${i}" aria-label="Remover">✕</button>
+      </div>`).join('');
+    modal('Camadas por cima do mapa', `
+      ${list || '<p style="color:var(--muted)">Nenhuma camada. Acrescente, por exemplo, os imóveis do CAR ou os processos da ANM para ver os limites sobre a imagem.</p>'}
+      <p style="color:var(--muted);font-size:12px">As camadas vêm do servidor de cada órgão e precisam de internet; não entram no mapa offline. Toque numa medição normalmente: a camada é só para ver.</p>`,
+    [{ label: '＋ Adicionar', onClick: () => { addOverlay(); return false; } }, { label: 'Fechar', cls: 'primary' }]);
+    const body = $('modalBody');
+    body.querySelectorAll('[data-ov-on]').forEach(c => c.onchange = () => { S.overlays[+c.dataset.ovOn].on = c.checked; persist(); renderOverlays(); });
+    body.querySelectorAll('[data-ov-op]').forEach(c => c.oninput = () => { S.overlays[+c.dataset.ovOp].opacity = +c.value; persist(); renderOverlays(); });
+    body.querySelectorAll('[data-ov-del]').forEach(b => b.onclick = () => { S.overlays.splice(+b.dataset.ovDel, 1); persist(); renderOverlays(); openOverlays(); });
+  }
+  function addOverlay() {
+    const c = map.getCenter();
+    modal('Adicionar camada', `
+      <label for="ovKind">Camada</label>
+      <select id="ovKind">${WMS_PRESETS.map(p => `<option value="${p.key}">${esc(p.title)}</option>`).join('')}
+        <option value="wms">Outro servidor WMS (endereço)</option><option value="xyz">Blocos XYZ (endereço com {z}/{x}/{y})</option></select>
+      <div id="ovUfBox"><label for="ovUf">Estado</label><select id="ovUf">${UFS.map(u => `<option ${u === 'MG' ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
+      <div id="ovUrlBox" hidden><label for="ovUrl">Endereço</label><input id="ovUrl" placeholder="https://servidor/geoserver/wms" autocomplete="off">
+        <div id="ovWmsBox"><button class="tool mini" id="ovFetch" type="button" style="margin-top:8px">Buscar camadas</button>
+        <label for="ovLayer">Camada do servidor</label><input id="ovLayer" list="ovLayerList" placeholder="nome da camada"><datalist id="ovLayerList"></datalist></div>
+        <label for="ovTitle">Nome para mostrar</label><input id="ovTitle"></div>
+      <p id="ovMsg" style="color:var(--muted);font-size:12px"></p>`,
+    [{ label: 'Voltar', cls: 'ghost', onClick: () => { openOverlays(); return false; } }, { label: 'Adicionar', cls: 'primary', onClick: () => {
+      const k = $('ovKind').value, pr = WMS_PRESETS.find(p => p.key === k);
+      let o;
+      if (pr) o = { kind: 'wms', url: pr.url, layers: pr.layers($('ovUf').value), title: pr.uf ? `${pr.title} (${$('ovUf').value})` : pr.title, version: '1.3.0' };
+      else {
+        const url = $('ovUrl').value.trim();
+        if (!/^https:\/\//i.test(url)) { $('ovMsg').textContent = 'Use um endereço que comece com https:// (o site é https e o navegador bloqueia http).'; return false; }
+        if (k === 'xyz' && !/\{z\}.*\{x\}.*\{y\}|\{z\}.*\{y\}.*\{x\}/.test(url)) { $('ovMsg').textContent = 'O endereço precisa ter {z}, {x} e {y}.'; return false; }
+        if (k === 'wms' && !$('ovLayer').value.trim()) { $('ovMsg').textContent = 'Informe a camada (toque em Buscar camadas para ver a lista).'; return false; }
+        o = { kind: k, url, layers: k === 'wms' ? $('ovLayer').value.trim() : '', version: $('ovLayer').dataset.ver || '1.3.0',
+          title: $('ovTitle').value.trim() || (k === 'wms' ? $('ovLayer').value.trim() : new URL(url.replace(/[{}]/g, '')).hostname) };
+      }
+      S.overlays.push(Object.assign({ id: uid(), opacity: 0.7, on: true }, o));
+      persist(); renderOverlays(); openOverlays();
+      toast('Camada adicionada');
+      return false;
+    } }]);
+    const sync = () => {
+      const k = $('ovKind').value, pr = WMS_PRESETS.find(p => p.key === k);
+      $('ovUfBox').hidden = !(pr && pr.uf);
+      $('ovUrlBox').hidden = !!pr;
+      $('ovWmsBox').hidden = k !== 'wms';
+      $('ovUrl').placeholder = k === 'xyz' ? 'https://servidor/{z}/{x}/{y}.png' : 'https://servidor/geoserver/wms';
+    };
+    $('ovKind').onchange = sync; sync();
+    $('ovFetch').onclick = async () => {
+      const url = $('ovUrl').value.trim();
+      if (!url) return;
+      $('ovMsg').textContent = 'Consultando o servidor…';
+      const cap = await wmsLayers(url);
+      if (!cap) { $('ovMsg').textContent = 'O servidor não respondeu ou não deixa o navegador ler a lista. Se souber o nome da camada, digite-o.'; return; }
+      $('ovLayerList').innerHTML = cap.layers.map(l => `<option value="${esc(l.name)}">${esc(l.title || '')}</option>`).join('');
+      $('ovLayer').dataset.ver = cap.version.startsWith('1.1') ? '1.1.1' : '1.3.0';
+      $('ovMsg').textContent = `${cap.layers.length} camada(s) encontradas. Toque no campo da camada para escolher.` +
+        (cap.mercator ? '' : ' Atenção: o servidor não anuncia EPSG:3857 e pode não desenhar.');
+    };
+  }
+
   map.on('moveend', () => { S.view = { c: [map.getCenter().lat, map.getCenter().lng], z: map.getZoom() }; persist(); });
 
   const savedLayer = L.layerGroup().addTo(map);
@@ -892,7 +1018,10 @@
   let watchId = null, lastFix = null, meMarker = null, accCircle = null, follow = false, fixWaiters = [];
   let wakeLock = null;
 
+  // GPS externo conectado: ele é a fonte de posição e o GPS do celular fica desligado
+  let ext = null; // { name, last }
   function startLocate() {
+    if (ext) { $('gpsBadge').hidden = false; $('btnLocate').classList.add('active'); return true; }
     if (!('geolocation' in navigator)) { toast('Este aparelho não oferece localização.'); return false; }
     if (watchId != null) return true;
     $('gpsBadge').hidden = false;
@@ -909,6 +1038,7 @@
     return true;
   }
   function stopLocate() {
+    if (ext) { follow = false; return; } // o receptor externo continua ligado até desconectar
     if (watchId != null) navigator.geolocation.clearWatch(watchId);
     watchId = null; lastFix = null; follow = false;
     if (meMarker) { map.removeLayer(meMarker); map.removeLayer(accCircle); meMarker = accCircle = null; }
@@ -916,9 +1046,12 @@
     $('gpsBadge').hidden = true;
   }
   function onFix(pos) {
+    if (ext && !pos.ext) return; // posição atrasada do GPS do celular depois de ligar o externo
     const ll = [pos.coords.latitude, pos.coords.longitude], acc = pos.coords.accuracy;
     lastFix = { ll, acc, t: pos.timestamp };
-    $('gpsBadge').textContent = `GPS ±${Math.round(acc)} m`;
+    $('gpsBadge').textContent = pos.ext
+      ? `GPS ext ${acc < 1 ? '±' + nf(acc, 2) : '±' + Math.round(acc)} m · ${pos.ext.qualityText} · ${pos.ext.sats} sat`
+      : `GPS ±${Math.round(acc)} m`;
     if (!meMarker) {
       accCircle = L.circle(ll, { radius: acc, color: '#1e88e5', weight: 1, fillOpacity: 0.12, interactive: false }).addTo(map);
       meMarker = L.marker(ll, { icon: L.divIcon({ className: 'me' }), interactive: false, zIndexOffset: 1000 }).addTo(map);
@@ -932,6 +1065,46 @@
     if (!startLocate()) return;
     toast('Aguardando o GPS…');
     fixWaiters.push(fn);
+  }
+
+  ExtGPS.on(fx => {
+    if (!ext) return;
+    ext.last = fx;
+    onFix({ coords: { latitude: fx.lat, longitude: fx.lng, accuracy: fx.acc }, timestamp: fx.t, ext: fx });
+  }, st => {
+    if (st.state === 'on') {
+      if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+      ext = { name: st.name, last: null };
+      $('gpsBadge').hidden = false; $('gpsBadge').textContent = `GPS ext: ${st.name} · aguardando posição…`;
+      $('btnLocate').classList.add('active');
+      toast(`Receptor conectado: ${st.name}`);
+    } else if (st.state === 'nofix' && ext) {
+      $('gpsBadge').textContent = `GPS ext: sem posição (${st.sats} sat)`;
+    } else if (st.state === 'off' && ext) {
+      ext = null; lastFix = null;
+      toast(st.lost ? 'O receptor externo desconectou. Voltando ao GPS do celular.' : 'Receptor externo desconectado', 4000);
+      $('gpsBadge').hidden = true; $('btnLocate').classList.remove('active');
+      if (cur && cur.mode === 'gps') startLocate();
+    }
+  });
+  function openExtGps() {
+    const ble = ExtGPS.hasBLE(), ser = ExtGPS.hasSerial();
+    const last = ext && ext.last;
+    modal('GPS externo', `
+      <p style="margin-top:0">Use um receptor GNSS (de precisão, RTK ou de antena externa) que mande posições em NMEA.</p>
+      ${ext ? `<p><b>Conectado:</b> ${esc(ext.name)}${last ? `<br>${esc(last.qualityText)} · ${last.sats} satélites · precisão ${last.acc < 1 ? nf(last.acc, 2) : Math.round(last.acc)} m${last.est ? ' (estimada pelo HDOP)' : ''}` : '<br>aguardando a primeira posição…'}</p>` : ''}
+      ${!ble && !ser ? '<p style="background:var(--chip);padding:8px;border-radius:8px">Este navegador não conecta a aparelhos Bluetooth nem a portas seriais. No Android, use o Chrome. No iPhone não há como: a Apple não libera isso para sites.</p>' : ''}
+      <div class="row2" ${ser && !ext ? '' : 'hidden'}><div><label for="egBaud">Velocidade da porta</label><select id="egBaud">${[4800, 9600, 19200, 38400, 57600, 115200].map(b => `<option ${b === 9600 ? 'selected' : ''}>${b}</option>`).join('')}</select></div><div></div></div>
+      <p style="color:var(--muted);font-size:12px">Bluetooth LE: receptores com serviço UART (Nordic) ou módulos HM-10. Porta serial: cabo USB e,
+      onde o Chrome permite, Bluetooth clássico. A precisão mostrada vem da mensagem GST do receptor; sem ela, é estimada pelo HDOP.
+      Enquanto o receptor estiver conectado, o GPS do celular fica desligado.</p>`,
+    (ext ? [{ label: 'Desconectar', cls: 'danger', onClick: () => { ExtGPS.disconnect(); } }]
+      : [].concat(ble ? [{ label: 'Bluetooth LE', onClick: () => { connectExt(() => ExtGPS.connectBLE()); } }] : [],
+        ser ? [{ label: 'Porta serial', onClick: () => { const b = +$('egBaud').value; connectExt(() => ExtGPS.connectSerial(b)); } }] : []))
+      .concat([{ label: 'Fechar', cls: 'primary' }]));
+  }
+  function connectExt(fn) {
+    fn().catch(e => { if (e && e.name !== 'NotFoundError') toast('Não foi possível conectar: ' + (e.message || e), 5000); });
   }
 
   $('btnLocate').onclick = () => {
@@ -1134,7 +1307,8 @@
     : m.type === 'distance' ? fmtLen(measure(m).length_m, S.lenUnit) : '';
   async function mapImage(items, base, W, H, r, o) {
     const b = BASES[base] || BASES.hybrid;
-    const res = await MapImg.render(Object.assign({ items, W, H, r, layers: b.img(), attribution: b.attr,
+    const res = await MapImg.render(Object.assign({ items, W, H, r, layers: b.img().concat(activeOverlayCrops()),
+      attribution: [b.attr].concat(S.overlays.filter(x => x.on).map(x => x.title)).join(' · '),
       labelOf: m => [m.name, sizeLabel(m)], tileZoom: 19 }, o));
     if (res.failed) toast(`${res.failed} de ${res.total} blocos do mapa não carregaram (sem internet?)`, 4000);
     return res.canvas;
@@ -1327,13 +1501,14 @@
     const FMTS = {
       kml: 'KML (Google Earth, QGIS, GPS)', pdf: 'Relatório PDF (A4, com mapa e medidas)', jpg: 'Imagem JPG do mapa',
       kmz: 'KMZ (KML compactado)', gpx: 'GPX (aparelhos GPS, Garmin)',
-      shp: 'Shapefile .zip (QGIS, ArcGIS)', dxf: 'DXF (AutoCAD e outros CAD, em UTM)',
+      link: 'Link (abre no navegador, sem arquivo)', shp: 'Shapefile .zip (QGIS, ArcGIS)', dxf: 'DXF (AutoCAD e outros CAD, em UTM)',
       geojson: 'GeoJSON (QGIS, SIG)', csv: 'CSV (Excel, com áreas e coordenadas)'
     };
     const utmConv = datum => Proj.utm(datum, zone, south).fwd;
     const make = async (fmt, o) => {
       const crs = o.crs;
       if (fmt === 'pdf') return { name: safe + '.pdf', type: 'application/pdf', data: await buildPDF(items, o, safe) };
+      if (fmt === 'link') return { link: `${location.origin}${location.pathname}#c=${await ShareLink.encode(items)}`, title: baseName || 'Medições' };
       if (fmt === 'jpg') return { name: safe + '.jpg', type: 'image/jpeg', data: await buildJPG(items, o) };
       if (fmt === 'kml') return { name: safe + '.kml', type: 'application/vnd.google-earth.kml+xml', data: Formats.toKML(items, describe) };
       if (fmt === 'kmz') {
@@ -1367,6 +1542,8 @@
       <label for="fFmt">Formato</label>
       <select id="fFmt">${Object.entries(FMTS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
       <div id="fCrsBox" hidden><label for="fCrs">Sistema de coordenadas</label><select id="fCrs"></select></div>
+      <p id="fLinkNote" hidden style="color:var(--muted);font-size:12px">Quem abrir o link vê as medições no mapa e pode guardá-las no próprio aparelho.
+      Elas vão dentro do link, sem passar por servidor; as fotos não vão.</p>
       <div id="fImgBox" hidden>
         <div id="fJpgBox"><label for="fRatio">Proporção</label><select id="fRatio">${Object.entries(RATIOS).map(([k, r]) => `<option value="${k}">${r.label}</option>`).join('')}</select></div>
         <label for="fMapT">Mapa</label><select id="fMapT">${Object.entries(BASES).map(([k, b]) => `<option value="${k}" ${k === S.layer ? 'selected' : ''}>${b.label}</option>`).join('')}</select>
@@ -1392,6 +1569,9 @@
       const f = $('fFmt').value, need = f === 'shp' || f === 'dxf' || f === 'csv' || f === 'pdf', geo = f !== 'dxf' && f !== 'pdf';
       $('fCrsBox').hidden = !need;
       $('fImgBox').hidden = f !== 'pdf' && f !== 'jpg';
+      $('fLinkNote').hidden = f !== 'link';
+      const bx = [...$('modalActions').children].find(b => /^(Baixar|Copiar link)$/.test(b.textContent));
+      if (bx) bx.textContent = f === 'link' ? 'Copiar link' : 'Baixar';
       $('fJpgBox').hidden = $('fJpgChk').hidden = f !== 'jpg';
       $('fPdfChk').hidden = f !== 'pdf';
       if (need && geo !== lastGeo) { $('fCrs').innerHTML = crsOpts(geo); lastGeo = geo; }
@@ -1407,13 +1587,24 @@
     }
   }
   function download(f) {
+    if (f.link) return copyLink(f.link);
     const url = URL.createObjectURL(f.data instanceof Blob ? f.data : new Blob([f.data], { type: f.type }));
     const a = document.createElement('a');
     a.href = url; a.download = f.name;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
+  async function copyLink(url) {
+    try { await navigator.clipboard.writeText(url); toast(`Link copiado (${url.length} caracteres). Cole no WhatsApp ou no e-mail.`, 4000); }
+    catch (e) { modal('Link', `<textarea rows="5" readonly style="width:100%">${esc(url)}</textarea>`, [{ label: 'Fechar', cls: 'primary' }]); }
+    if (url.length > 8000) setTimeout(() => toast('Link muito longo: alguns aplicativos cortam. Para muitas medições, prefira o KMZ.', 5000), 4200);
+  }
   async function share(f) {
+    if (f.link) {
+      try { await navigator.share({ title: f.title, text: `Medições: ${f.title}`, url: f.link }); }
+      catch (e) { if (e.name !== 'AbortError') copyLink(f.link); }
+      return;
+    }
     const file = new File([f.data], f.name, { type: f.type });
     try {
       if (navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: f.name });
@@ -1528,9 +1719,13 @@
       <label for="fGS">GPS: simplificar trechos retos (m; 0 desliga)</label>
       <input id="fGS" type="number" min="0" max="20" step="0.5" value="${S.gpsStraight}">
       <div class="row2"><div><label for="fGO">GPS: deslocamento lateral (m)</label><input id="fGO" type="number" min="0" max="50" step="0.1" value="${S.gpsOffset}"></div>
-      <div><label for="fGOS">Lado</label><select id="fGOS"><option value="r" ${S.gpsOffSide !== 'l' ? 'selected' : ''}>à direita</option><option value="l" ${S.gpsOffSide === 'l' ? 'selected' : ''}>à esquerda</option></select></div></div>`,
+      <div><label for="fGOS">Lado</label><select id="fGOS"><option value="r" ${S.gpsOffSide !== 'l' ? 'selected' : ''}>à direita</option><option value="l" ${S.gpsOffSide === 'l' ? 'selected' : ''}>à esquerda</option></select></div></div>
+      <div class="tool-row"><button class="tool" id="fOverlays" type="button">🗺 Camadas (CAR, ANM…)</button>
+      <button class="tool" id="fExtGps" type="button">📡 GPS externo</button></div>`,
     [{ label: '⬇ Mapa offline', onClick: () => { applySettings(); openOffline(); return false; } },
       { label: 'Fechar', cls: 'primary', onClick: applySettings }]);
+    $('fOverlays').onclick = () => { applySettings(); openOverlays(); };
+    $('fExtGps').onclick = () => { applySettings(); openExtGps(); };
   }
   function applySettings() {
     const base = document.querySelector('input[name=base]:checked').value;
@@ -1709,9 +1904,38 @@
     map.setView(ll, m || dms ? 17 : 14);
   };
 
+  // ---------- Link recebido ----------
+  const sharedLayer = L.layerGroup().addTo(map);
+  async function openShared(code) {
+    let got;
+    try { got = await ShareLink.decode(code); } catch (e) { return toast('Link inválido ou cortado', 4000); }
+    history.replaceState(null, '', location.pathname + location.search);
+    if (!got.length) return toast('O link não tem medições');
+    got.forEach(m => { m.color = /^#[0-9a-f]{6}$/i.test(m.color || '') ? m.color : TYPE_COLOR[m.type]; shapeFor(m).addTo(sharedLayer); });
+    map.fitBounds(L.latLngBounds(got.flatMap(m => m.points)), { padding: [40, 40], maxZoom: 18 });
+    const sig = m => m.type + '|' + m.points.map(p => p[0].toFixed(7) + ',' + p[1].toFixed(7)).join(';');
+    const have = new Set(store.items.map(sig));
+    const fresh = got.filter(m => !have.has(sig(m)));
+    modal('Medições recebidas', `
+      <ul class="shared-list">${got.map(m => `<li><b>${esc(m.name)}</b>${m.group ? ' · ' + esc(m.group) : ''}<br><span>${esc(describe(m) || TYPE_LABEL[m.type])}</span></li>`).join('')}</ul>
+      ${fresh.length < got.length ? `<p style="color:var(--muted);font-size:12px">${got.length - fresh.length} já está(ão) neste aparelho e não serão repetidas.</p>` : ''}`,
+    [{ label: 'Só ver', cls: 'ghost', onClick: () => { toast('Para tirar do mapa, toque em ✕ na lista ☰ ou recarregue a página', 4000); } },
+      { label: fresh.length ? `Guardar ${fresh.length}` : 'Fechar', cls: 'primary', onClick: () => {
+        sharedLayer.clearLayers();
+        if (!fresh.length) return;
+        const now = new Date().toISOString();
+        fresh.forEach(m => { m.id = uid(); m.created = m.updated = now; if (m.type !== 'area') delete m.holes; store.items.push(m); });
+        persistItems(); renderSaved(); renderList();
+        toast(`${fresh.length} medição(ões) guardada(s)`);
+      } }]);
+  }
+  window.addEventListener('hashchange', () => { if (location.hash.startsWith('#c=')) openShared(location.hash.slice(3)); });
+  $('btnList').addEventListener('click', () => sharedLayer.clearLayers());
+
   // ---------- Início ----------
   renderSaved();
   renderList();
+  if (location.hash.startsWith('#c=')) openShared(location.hash.slice(3));
   Sync.init({
     getLocal: () => ({ items: store.items, deleted: store.deleted }),
     applyLocal: applyRemote,
