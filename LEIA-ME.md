@@ -16,9 +16,8 @@ tocando no mapa ou caminhando com o GPS. Um código só roda em iPhone, Android 
 - Camadas: satélite com nomes, satélite, ruas (OSM), topográfico (OpenTopoMap). Busca por lugar ou "lat, lon".
 - **Offline**: o app abre e mede sem internet depois da primeira abertura. O mapa de satélite da área na tela
   pode ser baixado antes (◩ › Mapa offline, até 4.000 blocos por vez); o resto do mapa guarda o que já foi visto.
-- **Sincronização entre aparelhos** (☰ › Sincronizar): GitHub Gist (token pessoal com permissão `gist`) já
-  funciona; login Google fica disponível depois de ativar o Firebase (`FIREBASE_ATIVAR.md`). Vence a alteração
-  mais recente de cada medição; exclusões se propagam.
+- **Sincronização entre aparelhos** (☰ › Sincronizar): GitHub Gist (token pessoal com permissão `gist`),
+  na conta de cada usuário. Vence a alteração mais recente de cada medição; exclusões se propagam.
 - **Manual do usuário**: `manual.html` e `manual.pdf` (links na lista ☰; também abrem offline). O PDF é gerado do HTML pelo Chrome (impressão A4).
 
 Cálculo geodésico no elipsoide WGS84 (`geo.js`), conferido contra o pyproj: diferença de área
@@ -27,7 +26,7 @@ abaixo de 0,00002 %, perímetro e UTM idênticos ao milímetro.
 ## Arquivos
 
 `index.html`, `style.css`, `app.js` (interface), `geo.js` (cálculo), `formats.js` (KML/GeoJSON/CSV),
-`offline.js` (download de mapa), `sync.js` (sincronização), `firebase-config.js` (login Google, `null` até ativar),
+`offline.js` (download de mapa), `sync.js` (sincronização),
 `sw.js` (offline), `manual.html`, `manual.pdf`, `manifest.webmanifest` e `icons/` (instalação).
 
 ## Testar no PC

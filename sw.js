@@ -1,21 +1,20 @@
 // Service worker: app funciona sem internet e guarda os blocos de mapa já vistos.
-const VERSION = 'v10';
+const VERSION = 'v11';
 const SHELL = `shell-${VERSION}`;
 const TILES = 'tiles-v2';        // blocos vistos durante o uso (podado)
 const OFFLINE = 'tiles-offline'; // blocos baixados de propósito (não podado)
 const MAX_TILES = 3000;
 const ASSETS = [
   './', 'index.html', 'manual.html', 'manual.pdf', 'style.css', 'app.js', 'geo.js', 'proj.js', 'zip.js', 'mapimg.js', 'pdfdoc.js', 'photos.js', 'sharelink.js', 'extgps.js', 'formats.js', 'offline.js', 'sync.js',
-  'firebase-config.js', 'manifest.webmanifest',
+  'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.15.0/proj4.js'
 ];
 const TILE_HOSTS = ['server.arcgisonline.com', 'tile.openstreetmap.org', 'tile.opentopomap.org'];
-const CACHEABLE_HOSTS = ['cdnjs.cloudflare.com', 'www.gstatic.com'];
-const NO_CACHE_HOSTS = ['nominatim.openstreetmap.org', 'api.github.com', 'gist.githubusercontent.com',
-  'firestore.googleapis.com', 'identitytoolkit.googleapis.com', 'securetoken.googleapis.com'];
+const CACHEABLE_HOSTS = ['cdnjs.cloudflare.com'];
+const NO_CACHE_HOSTS = ['nominatim.openstreetmap.org', 'api.github.com', 'gist.githubusercontent.com'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(SHELL).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));

@@ -270,33 +270,47 @@ sozinhas quando a conexão voltar (se a sincronização estiver ligada). Para li
 download em lote; deles fica guardado só o que você já olhou.</div>
 
 <h2 id="sync">10. Sincronizar entre aparelhos</h2>
-<p>Sem sincronização, cada aparelho guarda só as próprias medições. Ligando a sincronização com a <b>mesma conta</b> em todos
+<p>Sem sincronização, cada aparelho guarda só as próprias medições. Ligando a sincronização com a <b>mesma conta do GitHub</b> em todos
 os aparelhos (celular, tablet, computador), as medições se juntam e passam a aparecer em todos. Uma medição apagada
 em um aparelho some dos outros.</p>
 <div class="note"><b>Sincronizar não é a mesma coisa que exportar KML.</b> A sincronização leva as próprias medições de
 um aparelho para o outro, sozinha, sem gerar arquivo nenhum. Os arquivos da <a href="#exportar">seção 8</a> (KML, Shapefile, DXF e os outros)
-serve para levar os dados <b>para fora</b> do Mapeador: Google Earth, QGIS, um aparelho GPS, ou mandar para outra pessoa.
-Sem sincronização, também dá para passar medições de um aparelho para outro na mão: exporte o KML num e importe no outro.</div>
+servem para levar os dados <b>para fora</b> do Mapeador: Google Earth, QGIS, um aparelho GPS, ou mandar para outra pessoa.</div>
 
-<h3>Opção A: conta Google</h3>
+<h3>Passo 1: criar a conta no GitHub (uma vez só)</h3>
+<p>O GitHub é um site gratuito que guarda as medições na <b>sua própria conta</b>; o Mapeador não tem servidor próprio.
+Não precisa instalar nada nem saber programar. Se você já tem conta, pule para o passo 2.</p>
 <ol class="steps">
-  <li><span class="k">☰</span> › <span class="k">☁ Sincronizar</span> › <span class="k">Entrar com Google</span>.</li>
-  <li>Escolha sua conta Google e autorize.</li>
-  <li>Repita nos outros aparelhos com <b>a mesma conta</b>.</li>
+  <li>Entre em <a href="https://github.com/signup">github.com/signup</a>, no celular ou no computador.</li>
+  <li>Informe seu e-mail, crie uma senha e escolha um nome de usuário. Pode ser qualquer nome disponível.</li>
+  <li>Resolva a verificação que o site mostrar e digite o código que chega no seu e-mail.</li>
+  <li>Se o site perguntar sobre planos ou preferências, fique com o plano <b>Free</b> (gratuito) ou pule a pergunta. Não precisa de cartão.</li>
 </ol>
-<p style="color:var(--muted)">Se o botão estiver cinza, o login Google ainda não foi ativado pelo responsável pelo site. Use a opção B.</p>
 
-<h3>Opção B: conta do GitHub</h3>
+<h3>Passo 2: gerar o código de acesso (token)</h3>
 <ol class="steps">
-  <li>No computador, entre em <a href="https://github.com/settings/tokens/new?scopes=gist&description=Mapeador">github.com/settings/tokens/new</a> (com sua conta GitHub).</li>
-  <li>Em <b>Note</b> escreva "Mapeador". Em <b>Expiration</b> escolha a validade (por exemplo, 1 ano). Marque <b>somente</b> a caixa <b>gist</b>.</li>
-  <li>Clique em <b>Generate token</b> e copie o código que começa com <span class="k">ghp_</span>. Ele só aparece uma vez; guarde-o num lugar seguro.</li>
-  <li>No Mapeador: <span class="k">☰</span> › <span class="k">☁ Sincronizar</span>, cole o código e toque em <span class="k">Conectar com GitHub</span>.</li>
-  <li>Repita o passo 4 em cada aparelho, com <b>o mesmo código</b>.</li>
+  <li>Já entrado na sua conta, abra <a href="https://github.com/settings/tokens/new?scopes=gist&description=Mapeador">github.com/settings/tokens/new</a>.
+  O mesmo endereço está em <span class="k">☰</span> › <span class="k">☁ Sincronizar</span> › <span class="k">Gerar token</span>. O site pode pedir sua senha ou um código de confirmação de novo.</li>
+  <li>Em <b>Note</b> deixe "Mapeador". Em <b>Expiration</b> escolha a validade (por exemplo, 1 ano). Deixe marcada <b>somente</b> a caixa <b>gist</b>.</li>
+  <li>Clique em <b>Generate token</b>, no fim da página, e copie o código que começa com <span class="k">ghp_</span>. Ele só aparece uma vez; guarde-o num lugar seguro.</li>
+</ol>
+
+<h3>Passo 3: conectar o Mapeador</h3>
+<ol class="steps">
+  <li><span class="k">☰</span> › <span class="k">☁ Sincronizar</span>, cole o código e toque em <span class="k">Conectar com GitHub</span>.</li>
+  <li>Repita em cada aparelho, com <b>o mesmo código</b>.</li>
 </ol>
 <div class="note">Esse código é uma senha de acesso aos seus gists (anotações) do GitHub. Não o envie a ninguém. Os dados ficam num
 gist <b>secreto</b>: ele não aparece em buscas, mas quem tiver o endereço exato consegue abri-lo. Se o código vazar, apague-o em
 <a href="https://github.com/settings/tokens">github.com/settings/tokens</a> e gere outro.</div>
+
+<h3>Quando o código vencer</h3>
+<p>A lista <span class="k">☰</span> passa a mostrar "Token do GitHub inválido ou expirado". As medições não se perdem. Gere um código novo
+(passo 2) e, em cada aparelho, toque em <span class="k">☁ Sincronizar</span> › <span class="k">Desconectar</span> e conecte de novo com o código novo.</p>
+
+<h3>Sem conta no GitHub</h3>
+<p>Quem não quiser criar conta pode passar medições na mão: exporte em <b>KML</b> ou <b>KMZ</b> e importe no outro aparelho, ou mande um
+<b>Link</b> (<a href="#exportar">seção 8</a>). Isso não é sincronização: precisa ser repetido a cada mudança.</p>
 
 <h3>Como funciona</h3>
 <ul>

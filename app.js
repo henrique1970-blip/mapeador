@@ -1810,7 +1810,7 @@
 
   // ---------- Sincronização ----------
   const fmtTime = iso => iso ? new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'nunca';
-  const KIND_LABEL = { gist: 'GitHub Gist', firebase: 'conta Google' };
+  const KIND_LABEL = { gist: 'GitHub Gist' };
   function renderSyncLine(st) {
     const el = $('syncLine');
     if (!st.connected) { el.textContent = '☁ Sincronização desligada — os dados ficam só neste aparelho.'; el.style.color = ''; return; }
@@ -1834,17 +1834,16 @@
         { label: 'Sincronizar agora', cls: 'primary', onClick: () => { Sync.now(); toast('Sincronizando…'); } }]);
       return;
     }
-    const fbOk = Sync.firebaseAvailable();
     modal('Sincronizar aparelhos', `
-      <p style="margin-top:0">Conecte <b>todos os seus aparelhos</b> à mesma conta. As medições de cada um se juntam
+      <p style="margin-top:0">Conecte <b>todos os seus aparelhos</b> à mesma conta do GitHub. As medições de cada um se juntam
       e passam a aparecer em todos.</p>
-      <button type="button" class="tool primary choice" id="sGoogle" ${fbOk ? '' : 'disabled'}>Entrar com Google</button>
-      ${fbOk ? '' : '<p style="color:var(--muted);font-size:13px">Login Google ainda não foi ativado neste site.</p>'}
-      <label for="sTok" style="margin-top:16px">Ou: token do GitHub (permissão “gist”)</label>
+      <p style="color:var(--muted);font-size:13px">Precisa de uma conta gratuita no GitHub e de um token.
+      <a href="manual.html#sync" target="_blank" rel="noopener">Ver o passo a passo</a> ·
+      <a href="https://github.com/settings/tokens/new?scopes=gist&description=Mapeador" target="_blank" rel="noopener">Gerar token</a></p>
+      <label for="sTok">Token do GitHub (permissão “gist”)</label>
       <input id="sTok" type="password" autocomplete="off" spellcheck="false" placeholder="ghp_…">
-      <button type="button" class="tool choice" id="sGist">Conectar com GitHub</button>`,
+      <button type="button" class="tool primary choice" id="sGist">Conectar com GitHub</button>`,
     [{ label: 'Fechar', cls: 'ghost' }]);
-    $('sGoogle').onclick = () => connectSync('firebase');
     $('sGist').onclick = () => {
       const t = $('sTok').value.trim();
       if (!t) return toast('Cole o token do GitHub');

@@ -1,11 +1,10 @@
 // Sincronização entre aparelhos.
 // Cada medição carrega `updated` (ISO). Exclusões viram marcas {id, updated, deleted: true}.
 // Na fusão, vence a versão mais recente de cada id; empate favorece a exclusão.
-// Provedores: GitHub Gist (token pessoal) e Firebase (login Google, se firebase-config.js estiver preenchido).
+// Provedor: GitHub Gist (token pessoal).
 (function (root) {
   'use strict';
   const FILE = 'mapeador-dados.json';
-  const FB_BASE = 'https://www.gstatic.com/firebasejs/10.14.1/';
   const TOMBSTONE_DAYS = 180;
 
   // ---------- Fusão ----------
@@ -96,68 +95,13 @@
     };
   }
 
-  // ---------- Provedor: Firebase (login Google) ----------
-  let fb = null; // módulos carregados
-  async function loadFirebase() {
-    if (fb) return fb;
-    const [appM, authM, fsM] = await Promise.all([
-      import(FB_BASE + 'firebase-app.js'), import(FB_BASE + 'firebase-auth.js'), import(FB_BASE + 'firebase-firestore.js')]);
-    const app = appM.initializeApp(root.FIREBASE_CONFIG);
-    const auth = authM.getAuth(app);
-    let db;
-    try { db = fsM.initializeFirestore(app, { localCache: fsM.memoryLocalCache() }); }
-    catch (e) { db = fsM.getFirestore(app); }
-    fb = { authM, fsM, auth, db };
-    try { await authM.getRedirectResult(auth); } catch (e) { /* sem redirecionamento pendente */ }
-    await new Promise(res => { const off = authM.onAuthStateChanged(auth, () => { off(); res(); }); });
-    return fb;
-  }
-  function firebaseProvider(cfg) {
-    const col = () => fb.fsM.collection(fb.db, 'users', fb.auth.currentUser.uid, 'items');
-    return {
-      kind: 'firebase',
-      async connect(interactive) {
-        await loadFirebase();
-        if (!fb.auth.currentUser) {
-          if (!interactive) throw new Error('Sessão Google encerrada. Entre novamente.');
-          const prov = new fb.authM.GoogleAuthProvider();
-          try { await fb.authM.signInWithPopup(fb.auth, prov); }
-          catch (e) {
-            if (/popup-blocked|operation-not-supported|popup-closed-by-browser/.test(e.code || '')) {
-              await fb.authM.signInWithRedirect(fb.auth, prov);
-              return new Promise(() => {}); // a página será recarregada
-            }
-            throw e;
-          }
-        }
-        cfg.account = fb.auth.currentUser.email || fb.auth.currentUser.displayName || 'Google';
-        return cfg;
-      },
-      async load() {
-        const snap = await fb.fsM.getDocs(col());
-        const out = [];
-        snap.forEach(d => { try { out.push(JSON.parse(d.data().json)); } catch (e) { /* ignora doc inválido */ } });
-        return out;
-      },
-      async save(all, changed) {
-        for (let i = 0; i < changed.length; i += 400) {
-          const b = fb.fsM.writeBatch(fb.db);
-          changed.slice(i, i + 400).forEach(r =>
-            b.set(fb.fsM.doc(col(), r.id), { json: JSON.stringify(r), updated: r.updated || '' }));
-          await b.commit();
-        }
-      },
-      async disconnect() { if (fb) await fb.authM.signOut(fb.auth); }
-    };
-  }
-
   // ---------- Motor ----------
   let opts, provider = null, busy = false, again = false, timer = null;
   const status = { connected: false, kind: null, account: null, last: null, error: null, busy: false };
   const emit = () => opts.onStatus(Object.assign({}, status));
 
   function makeProvider(cfg) {
-    return cfg.provider === 'gist' ? gistProvider(cfg) : cfg.provider === 'firebase' ? firebaseProvider(cfg) : null;
+    return cfg.provider === 'gist' ? gistProvider(cfg) : null;
   }
 
   async function run() {
@@ -182,7 +126,6 @@
   }
 
   const Sync = {
-    firebaseAvailable: () => !!root.FIREBASE_CONFIG,
     status: () => Object.assign({}, status),
     init(o) {
       opts = o;
