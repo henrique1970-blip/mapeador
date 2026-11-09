@@ -308,6 +308,30 @@ gist <b>secreto</b>: ele não aparece em buscas, mas quem tiver o endereço exat
 <p>A lista <span class="k">☰</span> passa a mostrar "Token do GitHub inválido ou expirado". As medições não se perdem. Gere um código novo
 (passo 2) e, em cada aparelho, toque em <span class="k">☁ Sincronizar</span> › <span class="k">Desconectar</span> e conecte de novo com o código novo.</p>
 
+<h3 id="equipe">Compartilhar os mesmos mapas com uma equipe</h3>
+<p>Para várias pessoas verem e editarem as mesmas medições, todas conectam o Mapeador com <b>a mesma conta do GitHub</b>.
+Use uma conta criada só para isso, separada da conta pessoal de cada um. Não é preciso criar repositório nem convidar ninguém no GitHub.</p>
+<ol class="steps">
+  <li>O responsável pela equipe cria a conta da equipe (passo 1) com um e-mail da equipe e guarda a senha com ele.</li>
+  <li>Entrado na conta da equipe, gera um código (passo 2), marcando <b>somente</b> a caixa <b>gist</b>. Em <b>Expiration</b>, escolha
+  <b>No expiration</b>, para o código não vencer ao mesmo tempo em todos os aparelhos.</li>
+  <li>Passa o código a cada membro por um canal reservado (em mãos ou mensagem direta). A senha da conta não é passada a ninguém:
+  o código basta para sincronizar.</li>
+  <li>Cada membro, em cada aparelho: <span class="k">☰</span> › <span class="k">☁ Sincronizar</span>, cola o código e toca em
+  <span class="k">Conectar com GitHub</span>. O primeiro aparelho cria o arquivo de dados na conta; os outros o encontram sozinhos.</li>
+</ol>
+<div class="note"><b>Antes de conectar, saiba que:</b>
+<ul>
+  <li>As medições que já estão no aparelho entram no mapa da equipe ao conectar. Quem não quiser compartilhar alguma deve exportá-la
+  (<a href="#exportar">seção 8</a>) e apagá-la do aparelho antes. Quem já sincronizava com a conta pessoal toca antes em
+  <span class="k">Desconectar</span>.</li>
+  <li>Uma medição apagada por qualquer membro some para todos. Se duas pessoas alterarem a mesma medição, vale a alteração mais recente.</li>
+  <li>As fotos não são compartilhadas: ficam só no aparelho que as tirou.</li>
+  <li>Quem tem o código lê e altera todas as medições da equipe. Quando alguém sair da equipe, o responsável gera um código novo,
+  apaga o antigo em <a href="https://github.com/settings/tokens">github.com/settings/tokens</a> e passa o novo aos que ficam,
+  que desconectam e conectam de novo. As medições não se perdem.</li>
+</ul></div>
+
 <h3>Sem conta no GitHub</h3>
 <p>Quem não quiser criar conta pode passar medições na mão: exporte em <b>KML</b> ou <b>KMZ</b> e importe no outro aparelho, ou mande um
 <b>Link</b> (<a href="#exportar">seção 8</a>). Isso não é sincronização: precisa ser repetido a cada mudança.</p>
